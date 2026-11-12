@@ -2,7 +2,7 @@
 export const RACE = {
   laps: 3, racers: 5, countdown: 3,
   lapTarget: 18000, // the loop is scaled to ~18 km per lap
-  respawnDelay: 4, rollback: 250, protect: 1.5, // rollback never crosses the lap start
+  respawnDelay: 4, rollback: 250, protect: 3, // rollback never crosses the lap start
   checkpointSpacing: 1000, // checkpoints must be passed in order
   minSpeed: 55, // no reverse, no hovering
   heatMax: 100, overheatLock: 1.6,
@@ -58,9 +58,9 @@ export const LIVERIES = [
 const L = (name, primary, secondary, accent, neon) => ({ name, primary, secondary, accent, neon });
 export const SHIP_LIVERIES = [
   [L('КОСТЬ', '#d9d5cc', '#55585e', '#3a3d42', '#2ef2e0'), L('ДЮНА', '#c8ab84', '#6b5a45', '#3e3428', '#ffb03a'), L('ГРАФИТ', '#7d8086', '#4a4d52', '#2c2e33', '#2ef2e0'),
-    L('RACING', '#1f4fd8', '#1f4fd8', '#ff7a1a', '#2ef2e0'), L('VOLT', '#ece9e4', '#ece9e4', '#ff2aa0', '#2ef2e0')],
+    L('RACING', '#1f4fd8', '#ff7a1a', '#f2f2f2', '#2ef2e0'), L('VOLT', '#ece9e4', '#ece9e4', '#ff2aa0', '#2ef2e0')],
   [L('ТЕНЬ', '#8c8d91', '#46474c', '#b9babd', '#b45cff'), L('ЛУНА', '#d8d8dc', '#8f9aa8', '#5d6470', '#b45cff'), L('МЕДЬ', '#a86a4a', '#3a3433', '#c98a62', '#b45cff'),
-    L('RACING', '#c8237a', '#c8237a', '#f2f2f2', '#32e6e0'), L('VOLT', '#22d3e0', '#1c2846', '#e63946', '#b45cff')],
+    L('RACING', '#c8237a', '#f2f2f2', '#32e6e0', '#32e6e0'), L('VOLT', '#22d3e0', '#1c2846', '#e63946', '#b45cff')],
   [L('ПУСТЫНЯ', '#a8946a', '#3e3f40', '#e2ddd0', '#3ff0e0'), L('СТАЛЬ', '#5a5c60', '#2f3134', '#c9c9c9', '#3ff0e0'), L('ПАТРУЛЬ', '#dcd8cc', '#5a6648', '#ff7a1a', '#3ff0e0'),
     L('RACING', '#d7e021', '#2a2b2d', '#f2f2f2', '#3ff0e0'), L('VOLT', '#c8202c', '#2a2b2d', '#f2f2f2', '#3ff0e0')],
   [L('ЖЕМЧУГ', '#dcdcdc', '#6a6b70', '#3c3e44', '#b45cff'), L('НОЧЬ', '#3a3c42', '#26282d', '#6d7078', '#2ef2e0'), L('СЕРЕБРО', '#9a9ca2', '#5d5f64', '#d0d2d6', '#ffb03a'),
@@ -106,10 +106,10 @@ export const ITEMS = [
 ];
 
 export const AI_LEVELS = [
-  { key: 'rookie', name: 'НОВИЧОК', speed: 0.9, aim: 0.3, react: 0.9, aggro: 0.3, line: 0.5, rubber: 0.06, dmg: 0.35 },
-  { key: 'pilot', name: 'ПИЛОТ', speed: 0.96, aim: 0.55, react: 0.55, aggro: 0.55, line: 0.75, rubber: 0.05, dmg: 0.6 },
-  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04, dmg: 0.85 },
-  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03, dmg: 1.0 },
+  { key: 'rookie', name: 'НОВИЧОК', speed: 0.9, aim: 0.3, react: 0.9, aggro: 0.3, line: 0.5, rubber: 0.06, dmg: 0.25 },
+  { key: 'pilot', name: 'ПИЛОТ', speed: 0.96, aim: 0.55, react: 0.55, aggro: 0.55, line: 0.75, rubber: 0.05, dmg: 0.42 },
+  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04, dmg: 0.62 },
+  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03, dmg: 0.8 },
 ];
 
 export const AI_NAMES = ['ВЕКТОР', 'ГАДЮКА', 'ТУМАН', 'ФЕНИКС', 'КОБРА', 'ОРИОН', 'РАЗРЯД', 'СТРИЖ'];

@@ -156,7 +156,9 @@ export class FX {
     this.scorch.push({ s, g, t: 0 });
   }
   explosion(p, scale = 1, { color = 0xff7a30, debris = 14, debrisColor = 0x3a3d45, ring = true } = {}) {
-    this.flash(p, color, 40 * scale, 0.6);
+    this.flash(p, color, 26 * scale, 0.45);
+    // dark smoke column so the blast reads as fire and smoke, not a white blob
+    for (let k = 0; k < 10 * Math.min(2, scale + 0.3); k++) this.smoke.emit(tmp.copy(p).add(rv(4 * scale)), rv(6 * scale).add(tmp2.set(0, 5, 0)), new THREE.Color(0x231d1a), (5 + Math.random() * 4) * scale, 2.2, { grow: 7 * scale, alpha: 0.75, drag: 0.8 });
     // fireball(s)
     for (let k = 0; k < 2; k++) {
       const b = this.balls.reduce((a, c) => (!a.m.visible ? a : !c.m.visible ? c : (a.t > c.t ? a : c)));
@@ -204,8 +206,8 @@ export class FX {
   damageSmoke(p, hpFrac, dt) {
     if (hpFrac > 0.6) return;
     const rate = hpFrac < 0.3 ? 40 : 14;
-    if (Math.random() < rate * dt) this.smoke.emit(p, rv(3), new THREE.Color(0x1d1a1a), 2.2, 1.4, { grow: 5, alpha: 0.6 });
-    if (hpFrac < 0.3 && Math.random() < 30 * dt) this.add.emit(p, rv(4), new THREE.Color(1, 0.45, 0.1), 2.2, 0.3, { grow: 2 });
+    if (Math.random() < rate * dt) this.smoke.emit(p, rv(3), new THREE.Color(0x2a2522), 2.4, 1.6, { grow: 6, alpha: 0.7 });
+    if (hpFrac < 0.3 && Math.random() < 8 * dt) this.add.emit(p, rv(3), new THREE.Color(0.9, 0.32, 0.06), 1.4, 0.18, { grow: 1 });
     if (hpFrac < 0.45 && Math.random() < 6 * dt) this.sparks(p, tmp.set(0, 1, 0), 4, 0xffd080, 25);
   }
   // --- lasers / beams / missiles visuals, keyed by sim ids ---
@@ -339,7 +341,7 @@ function caseGeometry() {
     // chunky corner armour: plates meeting at the corner
     dark.push(new THREE.BoxGeometry(1.25, 0.5, 1.25).translate(x * 0.93, y * 0.96, z * 0.93));
     dark.push(new THREE.BoxGeometry(0.5, 1.2, 0.5).translate(x * 0.98, y * 0.8, z * 0.98));
-    glow.push(new THREE.BoxGeometry(0.1, 0.55, 0.1).translate(x * 1.06, y * 0.62, z * 0.86));
+    glow.push(new THREE.BoxGeometry(0.18, 0.6, 0.18).translate(x * 1.06, y * 0.62, z * 0.86));
   }
   for (const a of [-h, h]) for (const b of [-h, h]) {
     glow.push(new THREE.BoxGeometry(0.09, S * 0.7, 0.09).translate(a, 0, b));
@@ -354,13 +356,13 @@ function caseGeometry() {
   CASE_GEO = { glass: new THREE.BoxGeometry(S * 0.98, S * 0.98, S * 0.98), dark: mergeGeometries(dark), glow: mergeGeometries(glow) };
   return CASE_GEO;
 }
-const CASE_DARK = new THREE.MeshStandardMaterial({ color: 0x2a2d33, metalness: 0.85, roughness: 0.35 });
+const CASE_DARK = new THREE.MeshStandardMaterial({ color: 0x4a4f58, metalness: 0.5, roughness: 0.4 });
 const CASE_MATS = {};
 function caseMaterials(key, color) {
   if (CASE_MATS[key]) return CASE_MATS[key];
   const c = new THREE.Color(color);
   return (CASE_MATS[key] = {
-    glass: new THREE.MeshPhysicalMaterial({ color: 0x0c1018, metalness: 0.2, roughness: 0.08, transparent: true, opacity: 0.42, depthWrite: false, side: THREE.DoubleSide, emissive: c.clone().multiplyScalar(0.06) }),
+    glass: new THREE.MeshPhysicalMaterial({ color: 0x9fb4c8, metalness: 0.1, roughness: 0.06, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide, emissive: c.clone().multiplyScalar(0.06) }),
     glow: new THREE.MeshBasicMaterial({ color: c.clone().multiplyScalar(1.15) }),
     icon: new THREE.SpriteMaterial({ map: iconTexture(key, color), color: new THREE.Color(1.25, 1.25, 1.25), transparent: true, depthWrite: false }),
     halo: new THREE.SpriteMaterial({ map: softTex(), color: c, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.32 }),

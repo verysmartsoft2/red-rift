@@ -160,6 +160,7 @@ export class Audio {
     };
     const tick = () => {
       if (!this.ctx) return;
+      if (next < ctx.currentTime - 0.1) next = ctx.currentTime + 0.05; // skip notes missed while the tab slept
       while (next < ctx.currentTime + 0.3) {
         const I = this.intensity;
         if (this.musicOn) {

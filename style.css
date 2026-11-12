@@ -193,6 +193,17 @@ body.touch .toast { bottom: auto; top: 90px; }
   body.touch #hud .br { bottom: 150px; }
   body.touch #hud .bl { bottom: 250px; }
 }
+/* phone in landscape: compact header so every tab stays reachable */
+@media (max-height: 500px) {
+  .mhead { padding: 6px 14px; gap: 12px; flex-wrap: nowrap; }
+  .logo.sm { font-size: 22px; }
+  #tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  #tabs button { padding: 6px 8px; font-size: 11px; flex: 0 0 auto; }
+  .panel { top: 50px; bottom: 10px; width: min(380px, 48vw); padding: 12px; }
+  .panel h2 { font-size: 26px; margin-top: 6px; }
+  .start { bottom: 12px; padding: 10px 26px; font-size: 18px; }
+  .orbit-hint { display: none; }
+}
 /* phone in landscape: everything along the bottom edge */
 @media (max-height: 500px) {
   #stick { width: 120px; height: 120px; bottom: 16px; }

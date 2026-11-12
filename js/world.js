@@ -33,7 +33,7 @@ export function baseHeight(x, z) {
 }
 function terrace(h, step = 24) {
   const q = h / step, f = Math.floor(q), r = q - f;
-  return lerp(h, (f + smooth(0.3, 0.7, r)) * step, 0.65);
+  return lerp(h, (f + smooth(0.42, 0.58, r)) * step, 0.85);
 }
 
 function computeHeightfield() {
@@ -41,6 +41,7 @@ function computeHeightfield() {
   const nd = new Float32Array(N * N).fill(1e12), ni = new Int32Array(N * N).fill(-1);
   const td = new Float32Array(N * N).fill(1e12);
   const ndN = new Float32Array(N * N).fill(1e12), niN = new Int32Array(N * N).fill(-1); // nearest open-air (non-tunnel) sample
+  const tiT = new Int32Array(N * N).fill(-1); // nearest tunnel sample
   const R = 560, rc = Math.ceil(R / cell);
   const isTun = TYPE_NAMES.indexOf('tunnel');
   for (let i = 0; i < T.n; i += 3) {
@@ -56,7 +57,7 @@ function computeHeightfield() {
         const d2 = ddx * ddx + ddz * ddz; if (d2 > R * R) continue;
         const k = zz * N + xx;
         if (d2 < nd[k]) { nd[k] = d2; ni[k] = i; }
-        if (tun && d2 < td[k]) td[k] = d2;
+        if (tun && d2 < td[k]) { td[k] = d2; tiT[k] = i; }
         if (!tun && d2 < ndN[k]) { ndN[k] = d2; niN[k] = i; }
       }
     }
@@ -95,7 +96,8 @@ function computeHeightfield() {
         const rw = ty === 'split' ? ridgeAt(i * T.ds) : 0;
         if (rw > 0) {
           const top = F + 150 + 50 * fbm(x * 0.004 + 3, z * 0.004, 3) + ridged(x * 0.02, z * 0.02, 2) * 14;
-          h = Math.max(h, lerp(h, terrace(top, 22), smooth(rw + 4, rw - 16, d)));
+          const top2 = Math.max(top, T.ceilY[i] + 45); // never lower than the flight ceiling: no invisible wall above it
+          h = Math.max(h, lerp(h, terrace(top2, 22), smooth(rw + 5, rw - 2, d)));
         }
       }
     }
@@ -111,9 +113,17 @@ function computeHeightfield() {
         h = Math.max(h, lerp(h, terrace(top, 30), m));
       }
     }
+    // inside the mountain the rock must close OVER the tube, never cut across it (ghost wall at the tunnel)
+    let inMountain = false;
+    if (tiT[k] >= 0) {
+      const it = tiT[k], dT2 = Math.sqrt(td[k]);
+      const ea2 = (x - fa.p.x) * fa.t.x + (z - fa.p.z) * fa.t.z, eb2 = (x - fb.p.x) * fb.t.x + (z - fb.p.z) * fb.t.z;
+      inMountain = ea2 > 2 && eb2 < -2 && td[k] <= ndN[k];
+      if (inMountain && dT2 < T.hw[it] + 40) h = Math.max(h, T.py[it] + T.hw[it] + 30);
+    }
     // nothing may rise into the flight corridor (except the split ridge)
     const io = niN[k];
-    if (io >= 0) {
+    if (io >= 0 && !inMountain) {
       const dO = Math.sqrt(ndN[k]), rw = TYPE_NAMES[T.type[io]] === 'split' ? ridgeAt(io * T.ds) : 0;
       if (dO < T.hw[io] + 2 && !(rw > 0 && dO < rw + 4)) h = Math.min(h, T.floorY[io] + 3);
     }
@@ -170,7 +180,7 @@ function buildTunnel(group) {
   const f = newFrame();
   const verts = [], glow = [], idxs = [];
   const nRings = Math.ceil((t1 - t0 + 8) / step) + 1;
-  const ringEvery = 36;
+  const ringEvery = 72;
   const neon = [new THREE.Color(0xff2fd0), new THREE.Color(0x26f6ff)];
   for (let k = 0; k < nRings; k++) {
     const s = t0 - 4 + k * step;
@@ -211,8 +221,8 @@ function buildTunnel(group) {
   // neon rings
   const ringGeo = new THREE.TorusGeometry(R0 - 3, 0.5, 6, 64);
   const count = Math.floor((t1 - t0) / ringEvery);
-  const rings = [new THREE.InstancedMesh(ringGeo, new THREE.MeshBasicMaterial({ color: neon[0].clone().multiplyScalar(2.2) }), count),
-    new THREE.InstancedMesh(ringGeo, new THREE.MeshBasicMaterial({ color: neon[1].clone().multiplyScalar(2.2) }), count)];
+  const rings = [new THREE.InstancedMesh(ringGeo, new THREE.MeshBasicMaterial({ color: neon[0].clone().multiplyScalar(0.8) }), count),
+    new THREE.InstancedMesh(ringGeo, new THREE.MeshBasicMaterial({ color: neon[1].clone().multiplyScalar(0.8) }), count)];
   const c = [0, 0], m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
   for (let k = 0; k < count; k++) {
     const s = t0 + k * ringEvery; frameAt(s, f);

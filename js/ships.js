@@ -82,7 +82,8 @@ function paintShader(mat, stripeColor, stripe, damage) {
       float rrG = rrN(vOP * vec3(1.6, 3.0, 0.45)) * 0.6 + rrN(vOP * 6.0) * 0.4;
       float rrWear = smoothstep(0.78, 0.97, rrN(vOP * 3.2 + 7.0)) * smoothstep(0.55, 0.8, rrN(vOP * 0.7 + 3.0));
       diffuseColor.rgb = mix(diffuseColor.rgb, uStripeCol, rrSt);
-      diffuseColor.rgb *= (1.0 - 0.45 * rrPanel) * mix(0.72, 1.0, smoothstep(-0.9, 0.4, vOP.y)) * (0.93 + 0.08 * rrG);
+      float rrTone = 0.9 + 0.14 * rrH(vec3(floor(vOP.x / 1.15), floor(rrZ / 1.7), 1.0)); // panels differ slightly in tone
+      diffuseColor.rgb *= (1.0 - 0.72 * rrPanel) * mix(0.72, 1.0, smoothstep(-0.9, 0.4, vOP.y)) * (0.93 + 0.08 * rrG) * rrTone;
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.55 + vec3(0.08), rrWear * 0.35);
       float rrRough = rrG;
       // battle damage (damage stages reference): scorched patches spread with damage, embers glow in them when badly hurt

@@ -12,7 +12,7 @@ float fbm3(vec3 p){ float s=0., a=.5; for(int i=0;i<4;i++){ s+=a*vnoise(p); p*=2
 const ROCK_FN = /* glsl */`
 vec3 rockColor(vec3 p, vec3 n){
   float w = fbm3(p*0.012)*2.2 + vnoise(p*0.09)*0.5;
-  float band = p.y*0.085 + w*2.0;
+  float band = p.y*0.085 + w*0.4;
   float b1 = 0.5+0.5*sin(band); float b2 = 0.5+0.5*sin(band*2.7+1.3);
   vec3 c1 = vec3(0.42,0.12,0.055), c2 = vec3(0.70,0.27,0.11), c3 = vec3(0.86,0.50,0.27), c4 = vec3(0.24,0.075,0.045);
   vec3 col = mix(c1,c2,b1);

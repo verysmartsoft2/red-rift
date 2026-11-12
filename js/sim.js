@@ -152,6 +152,10 @@ export class Race {
     if (r.ai) {
       const gap = this.player.dist - r.dist;
       target *= 1 + clamp(gap / 600, -1, 1) * r.ai.rubber;
+      // pack racing: the field closes up instead of stringing out into a procession
+      const lead = this.order && this.order[0];
+      if (lead && lead !== r) target *= 1 + clamp((lead.dist - r.dist) / 2500, 0, 1) * 0.07;
+      else if (lead === r && this.order[1]) target *= 1 - clamp((r.dist - this.order[1].dist) / 2500, 0, 1) * 0.04;
     }
     if (inp.brake) target *= 0.62;
     // slipstream: tucked in 10-70 m behind a rival gives +12 % (KESTREL's dash also cuts through it)
@@ -159,7 +163,7 @@ export class Race {
     for (const o of this.racers) {
       if (o === r || o.dead) continue;
       const d = o.dist - r.dist;
-      if (d > 10 && d < 70 && Math.abs(o.x - r.x) < 8 && Math.abs(o.y - r.y) < 6) { r.draft = true; break; }
+      if (d > 8 && d < 95 && Math.abs(o.x - r.x) < 14 && Math.abs(o.y - r.y) < 10) { r.draft = true; break; }
     }
     if (r.draft) target *= 1.12;
     if (F.boost > 0) target = Math.max(target, def.top * 1.5);
@@ -195,7 +199,7 @@ export class Race {
     }
     // the split ridge in the middle of the canyon is solid rock
     const rw = ridgeAt(s);
-    if (rw > 0 && Math.abs(r.x) < rw + 4) { const sg = Math.sign(r.x) || (r.id % 2 ? 1 : -1); r.x = sg * (rw + 4); r.vx = sg * Math.max(Math.abs(r.vx), 6); nx = sg; scraped = true; }
+    if (rw > 0 && Math.abs(r.x) < rw + 2) { const sg = Math.sign(r.x) || (r.id % 2 ? 1 : -1); r.x = sg * (rw + 2); r.vx = sg * Math.max(Math.abs(r.vx), 6); nx = sg; scraped = true; }
     if (scraped && F.phase <= 0) {
       r.scrape += dt; this.damage(r, RACE.wallDamage * dt, null, 'wall'); r.speed *= 1 - 0.6 * dt;
       if (r.scrape > 0.08) { r.scrape = 0; this.emit({ type: 'scrape', r: r.id, s, x: r.x - nx * 3, y: r.y - ny * 3, nx, ny }); }
@@ -630,7 +634,8 @@ export class Race {
     const bb = bounds(s + 40);
     tx = clamp(tx, -bb.hw + 12, bb.hw - 12); ty = clamp(ty, bb.yMin + 8, bb.yMax - 12);
     const rwA = Math.max(ridgeAt(s + 40), ridgeAt(s + 120), ridgeAt(s + 220));
-    if (rwA > 0 && Math.abs(tx) < rwA + 16) tx = (Math.sign(r.x) || (r.id % 2 ? 1 : -1)) * (rwA + 24); // pick a lane early
+    if (rwA > 0) { if (!A.lane) A.lane = r.item < 0 ? 1 : (R() < 0.5 ? -1 : 1); if (Math.abs(tx) < rwA + 16 || Math.sign(tx) !== A.lane) tx = A.lane * (rwA + 24); } // pick a lane early
+    else A.lane = 0;
     if (bb.tunnel) { const rr = Math.hypot(tx, ty), m = bb.hw - 16; if (rr > m) { tx *= m / rr; ty *= m / rr; } }
     inp.steer = clamp((tx - r.x) / 14 - r.vx * 0.02, -1, 1);
     inp.climb = clamp((ty - r.y) / 10 - r.vy * 0.02, -1, 1);
@@ -639,7 +644,8 @@ export class Race {
     const tgt = A.tgt >= 0 ? this.racers[A.tgt] : null;
     const heatOk = r.heat < 80 || r.fx.overload > 0;
     A.burst = (A.burst || 0) - dt; if (A.burst < -1.6 * (1.2 - A.aggro)) A.burst = 0.6 + A.aggro * 1.6; // fire in bursts, calmer AI rests longer
-    inp.fire = !!tgt && !tgt.dead && heatOk && A.burst > 0 && R() < 0.3 + A.aggro * 0.7;
+    const calm = this.time < 40 ? 0.45 : 1; // the opening lap is a race, not a massacre
+    inp.fire = !!tgt && !tgt.dead && tgt.protect <= 0 && heatOk && A.burst > 0 && R() < (0.3 + A.aggro * 0.7) * calm;
     if (r.laser.rail) inp.fire = !!tgt && A.railHold;
     if (r.lockTarget >= 0 && r.lockT > 0.6 && r.ammo > 0 && R() < dt * (0.25 + A.aggro * 0.9)) inp.missile = true;
     if (r.missileDef.mine && R() < dt * 0.15 * A.aggro && r.place <= 3) inp.missile = true;

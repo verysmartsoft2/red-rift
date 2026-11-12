@@ -139,13 +139,13 @@ function setupHangar() {
 }
 function refreshDisplayShip() {
   if (displayShip) scene.remove(displayShip);
-  displayShip = buildShip(SHIPS[S.ship].key, S.livery, S.finish, 7);
+  displayShip = buildShip(SHIPS[S.ship].key, S.livery, S.finish, S.ship + 1);
   displayShip.position.copy(hangarPos);
   displayShip.scale.setScalar(1.15);
   scene.add(displayShip);
   // frame the whole airframe: orbit distance follows the ship's size
   const bs = new THREE.Box3().setFromObject(displayShip.userData.body).getBoundingSphere(new THREE.Sphere());
-  orbit.base = Math.max(20, bs.radius * 3.0); orbit.dist = orbit.base;
+  orbit.base = Math.max(16, bs.radius * (innerWidth < innerHeight ? 3.6 : 2.2)); orbit.dist = orbit.base;
 }
 
 // ---------------- menu UI ----------------
@@ -496,7 +496,7 @@ function sfx(name, pos, mul = 1) {
   audio.play(name, d, pan * 0.85);
 }
 function feed(html) { const d = el('div', '', html); $('hFeed').prepend(d); setTimeout(() => d.remove(), 5000); while ($('hFeed').children.length > 5) $('hFeed').lastChild.remove(); }
-const nameOf = (r) => `<span style="color:${r.livery.primary}">${r.name}</span>`;
+const nameOf = (r) => `<span style="color:${r.livery.neon}">${r.name}</span>`;
 function center(t, pop = false) { const c = $('hCenter'); c.textContent = t; if (pop) { c.classList.remove('popin'); void c.offsetWidth; c.classList.add('popin'); } }
 let subT = 0; function sub(t, dur = 1.6) { $('hSub').textContent = t; subT = dur; }
 // pickup card: what the case gave and what it does
@@ -546,7 +546,7 @@ function processEvents() {
         spawnWreck(v);
         const d = camDist(p); audio.play('bigexplode', d * 0.5);
         feed(k && k !== v ? `${nameOf(k)} <b>✕</b> ${nameOf(v)}` : `${nameOf(v)} разбился`);
-        if (v === P) { deathPos = p.clone(); slowmo(0.2, 1.4); center('СБИТ', true); missileCam = false; }
+        if (v === P) { toastT = 0; $('hToast').classList.remove('show'); deathPos = p.clone(); slowmo(0.2, 1.4); center('СБИТ', true); missileCam = false; }
         else if (k === P) { slowmo(0.22, 1.1); center('СБИТ ' + v.name, true); setTimeout(() => center(''), 1300); }
         else if (d < 120) slowmo(0.4, 0.6);
         break;
@@ -671,7 +671,7 @@ function updateRaceVisuals(dt, rdt) {
     }
     if (r.fx.nova > 0 && r.novaEnd) {
       const end = toWorld(r.novaEnd.s, r.novaEnd.x, r.novaEnd.y, new THREE.Vector3());
-      fx.setBeam('n' + i, nose, end, '#ffc24a', 9 + Math.sin(gtime * 40) * 2);
+      fx.setBeam('n' + i, nose, end, '#ffc24a', (r === P ? 9 : 5) + Math.sin(gtime * 40) * 1.5);
       fx.setBeam('nc' + i, nose, end, '#ffffff', 3);
       fx.sparks(end, tv2.subVectors(nose, end).normalize(), 6, 0xffc24a, 80);
       if (r === P) hitShake = Math.max(hitShake, 0.25);
@@ -816,7 +816,7 @@ function updateHUD(rdt) {
     const st = $('hStand'); st.innerHTML = '';
     for (const r of race.order || race.racers) {
       const li = el('li', (r.human ? 'me ' : '') + (r.dead ? 'dead' : ''));
-      const sw = el('i'); sw.style.background = r.livery.primary;
+      const sw = el('i'); sw.style.background = r.livery.neon;
       const lead = race.order[0];
       const gap = r === lead ? (r.finished ? 'ФИНИШ' : 'ЛИДЕР') : (r.finished ? fmt(r.finishTime) : '−' + Math.max(0, Math.round(lead.dist - r.dist)) + ' м');
       li.append(el('span', '', r.place), sw, el('span', '', r.name), el('span', '', gap));
@@ -884,7 +884,7 @@ function showResults() {
   const place = rows.findIndex(x => x.r === P) + 1;
   $('resTitle').textContent = place === 1 ? 'ПОБЕДА' : `${place} МЕСТО`;
   let html = '<tr><th>МЕСТО</th><th>ПИЛОТ</th><th>САМОЛЁТ</th><th>ВРЕМЯ</th><th>СБИЛ</th><th>ПОТЕРИ</th></tr>';
-  rows.forEach((x, i) => { html += `<tr class="${x.r === P ? 'me' : ''}"><td>${i + 1}</td><td style="color:${x.r.livery.primary}">${x.r.name}</td><td>${x.r.def.name}</td><td>${fmt(x.t)}${x.r.finished ? '' : '*'}</td><td>${x.r.kills}</td><td>${x.r.deaths}</td></tr>`; });
+  rows.forEach((x, i) => { html += `<tr class="${x.r === P ? 'me' : ''}"><td>${i + 1}</td><td style="color:${x.r.livery.neon}">${x.r.name}</td><td>${x.r.def.name}</td><td>${fmt(x.t)}${x.r.finished ? '' : '*'}</td><td>${x.r.kills}</td><td>${x.r.deaths}</td></tr>`; });
   html += `<tr><td colspan="6" class="small">Лучший круг: ${fmt(bestLap)} · уровень ИИ: ${AI_LEVELS[S.diff].name}${rows.some(x => !x.r.finished) ? ' · * расчётное время' : ''}</td></tr>`;
   $('resTable').innerHTML = html;
 }

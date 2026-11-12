@@ -125,12 +125,12 @@ export function buildCapitalFleet(scene, startPos, wreckFrame) {
   if (wreckFrame) {
     const { p, t, r } = wreckFrame;
     const bow = buildCapitalShip({ L: 700, seed: 41, broken: true });
-    bow.position.copy(p).addScaledVector(r, -260).addScaledVector(t, 220); bow.position.y = -45;
-    bow.lookAt(bow.position.clone().add(t.clone().multiplyScalar(-1).addScaledVector(r, 0.7)));
+    bow.position.copy(p).addScaledVector(r, -470).addScaledVector(t, 220); bow.position.y = -45;
+    bow.lookAt(bow.position.clone().add(t.clone().multiplyScalar(-1).addScaledVector(r, 0.22)));
     bow.rotateZ(0.5); bow.rotateX(-0.12);
     const stern = buildCapitalShip({ L: 560, seed: 42, broken: true });
-    stern.position.copy(p).addScaledVector(r, 300).addScaledVector(t, -260); stern.position.y = -40;
-    stern.lookAt(stern.position.clone().add(t.clone().addScaledVector(r, -0.5)));
+    stern.position.copy(p).addScaledVector(r, 470).addScaledVector(t, -260); stern.position.y = -40;
+    stern.lookAt(stern.position.clone().add(t.clone().addScaledVector(r, -0.15)));
     stern.rotateZ(-0.7);
     scene.add(bow, stern);
     fleet.wreck = [bow, stern];

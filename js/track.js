@@ -20,8 +20,8 @@ const RAW = [
   [450, 1010, 208, 46, 40, 'tunnel'],
   [140, 1100, 212, 46, 40, 'tunnel'],
   // out of the mountain straight into a narrow gorge that drops ~170 m
-  [-120, 1180, 150, 44, 62, 'gorge'],
-  [-330, 1140, 72, 40, 70, 'gorge'],
+  [-120, 1180, 120, 62, 70, 'gorge'],
+  [-330, 1140, 30, 48, 80, 'gorge'],
   [-560, 1210, 40, 150, 120, 'wreck'],
   [-800, 1040, 50, 150, 90, 'wreck'],
   // wide canyon split by a rock ridge: two lanes, pick one
@@ -110,7 +110,7 @@ function buildTrack() {
   }
   // smooth floor / ceiling so transitions are not stair-stepped (except cliff edge)
   for (let pass = 0; pass < 2; pass++) {
-    for (const arr of [T.ceilY]) {
+    for (const arr of [T.ceilY, T.floorY]) {
       const c = arr.slice();
       for (let i = 0; i < n; i++) { let s = 0; for (let j = -20; j <= 20; j++) s += c[(i + j + n) % n]; arr[i] = s / 41; }
     }
@@ -220,6 +220,8 @@ function buildFeatures() {
   // the split: a lens-shaped rock ridge down the middle of the 'split' sector
   const [p0, p1] = RANGES.split;
   RIDGE = F.ridge = { s0: p0 + 120, s1: p1 - 60, w: 36 };
+  // the right lane gets a boost ring, the left lane keeps the cases: a real choice
+  F.boostRings.push({ s: (RIDGE.s0 + RIDGE.s1) / 2, x: -(RIDGE.w + 46), y: 12 });
   // keep cases off the ridge
   for (const pk of F.pickups) { const w = ridgeAt(pk.s); if (w > 0) pk.x = Math.sign(pk.x || (pk.id % 2 ? 1 : -1)) * (w + 18 + Math.abs(pk.x) * 0.4); }
   // checkpoints every ~1 km, passed in order; the last one is the start/finish line
