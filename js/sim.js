@@ -125,6 +125,7 @@ export class Race {
     if (r.overheat > 0) r.overheat -= dt;
     if (r.ammo < r.ammoMax) { r.ammoRegen += dt; if (r.ammoRegen > r.missileDef.regen) { r.ammoRegen = 0; r.ammo++; } }
     if (F.repair > 0) r.hp = Math.min(r.maxHp, r.hp + 40 / 3 * dt);
+    if (this.time - (r.lastDmgT ?? -99) > 4) r.hp = Math.min(r.maxHp, r.hp + r.maxHp * 0.05 * dt); /* hull regen out of combat */
     // checkpoints, strictly in order (absolute index across all laps)
     while (r.cp < CPS.length * RACE.laps && r.dist >= this.cpDist(r.cp)) {
       r.cp++;
@@ -294,7 +295,8 @@ export class Race {
     if (r.shield > 0) { const ab = Math.min(r.shield, amt); r.shield -= ab; amt -= ab; }
     if (amt <= 0) return;
     if (src && src.ai && src !== r && !src.human) amt *= (src.ai.dmg ?? 1) * (src.lap <= 1 ? 0.75 : 1); // easier levels hit softer; the opening lap is a race
-    r.hp -= amt; r.hitFlash = 1;
+    if (src && src.human && r.ai) amt *= 0.8; /* human vs bot: the field does not churn through respawns */
+    r.hp -= amt; r.hitFlash = 1; r.lastDmgT = this.time;
     if (src) { r.lastHitBy = src.id; r.lastHitT = this.time; }
     if (r.hp <= 0) {
       r.dead = true; r.deaths++; r.respawnT = RACE.respawnDelay; r.item = -1; r.fx.nova = 0; r.fx.drones = 0;
@@ -634,7 +636,8 @@ export class Race {
       let tgt = this.findTarget(r, 400, 80, 70);
       // at most two bots hunt the same human pilot at a time
       if (tgt && (this.time - (tgt.spawnAt ?? -99) < 12 || (A.spare && A.spare.id === tgt.id && this.time < A.spare.until))) tgt = null; // grace after a respawn
-      if (tgt && tgt.human && A.tgt !== tgt.id && this.racers.filter(o => o !== r && o.ai && !o.dead && o.ai.tgt === tgt.id).length >= 2) tgt = null;
+      if (tgt && tgt.human && !r.human && r.place > tgt.place + 2) tgt = null; /* a bot far behind races, it does not snipe the human */
+      if (tgt && A.tgt !== tgt.id && this.racers.filter(o => o !== r && o.ai && !o.dead && o.ai.tgt === tgt.id).length >= 2) tgt = null;
       if (tgt && R() < A.aggro * 0.7) { tx = tgt.x + (R() - 0.5) * 6; ty = tgt.y; }
       // threats: incoming missiles -> jink
       const threat = this.missiles.some(m => m.target === r.id && Math.abs(dS(m.s, s)) < 220);
