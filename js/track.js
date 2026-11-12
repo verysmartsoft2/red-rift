@@ -224,6 +224,8 @@ function buildFeatures() {
   const ws = w0 + (w1 - w0) * 0.55;
   for (let k = 0; k < 9; k++) F.ribs.push({ s: ws + (k - 4) * 34, r: 155 });
   F.wreckS = ws;
+  // spires under the ribs stand near the axis, so the dodge fits on either side within the rib limit (r/2)
+  for (const sp of F.spires) if (sp.s > F.ribs[0].s - 250 && sp.s < F.ribs[F.ribs.length - 1].s + 30) sp.x = Math.sign(sp.x || 1) * Math.min(Math.abs(sp.x), 40);
   // pickup groups: 9 per lap (every ~2 km from 1 km), 5 cases across the corridor
   const L = TRACK.length, k18 = L / 18000;
   for (let g = 0; g < 9; g++) {

@@ -429,7 +429,7 @@ function buildWreckRibs(group) {
       q4.setFromRotationMatrix(new THREE.Matrix4().makeRotationZ(a - Math.PI / 2)).premultiply(m.quaternion);
       // three stringers per rib span the full 34 m rib spacing, so neighbouring ribs join into one hull line
       const long = RIB_LONG_K.includes(k);
-      sc4.set(1, 1, long ? 2.65 : 0.6 + r() * 0.25); // short ones stay within the rib's own 12 m band m4.compose(v4, q4, sc4); frames.setMatrixAt(nf, m4);
+      sc4.set(1, 1, long ? 2.65 : 0.6 + r() * 0.25); m4.compose(v4, q4, sc4); frames.setMatrixAt(nf, m4); // short ones stay within the rib's own 12 m band
       frames.setColorAt(nf++, col.setHSL(0.05 + r() * 0.03, 0.35 + r() * 0.2, 0.26 + r() * 0.14));
     }
     sc4.set(1, 1, 1);
