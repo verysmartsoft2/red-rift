@@ -1,6 +1,8 @@
-# RED RIFT racer models for Blender 5.x.
-# Builds the five airframes, cuts control surfaces / intakes / vents with booleans, bevels hard parts,
-# bakes ambient occlusion and exports one GLB per ship (materials named rr_<role>, the game repaints them).
+# RED RIFT racer models for Blender 5.x, built from the concept sheets in
+# references/RED_RIFT_References_All/02_Aircraft_and_Liveries (three views per ship).
+# Faceted hard-surface hulls (flat panels), chamfered wing plates, separate control surfaces,
+# weapons, intakes, engines with nozzles and neon rings; ambient occlusion is baked and each ship
+# is exported as one GLB (materials named rr_<role>; the game repaints them per livery).
 #
 #   blender -b --factory-startup --python tools/blender/build_ships.py -- <out_dir> [render_dir|-] [ship ...]
 #
@@ -20,10 +22,11 @@ def R(x=0, y=0, z=0): return Euler((x, y, z), 'XYZ').to_matrix().to_4x4()
 def S(x, y, z): return Matrix.Diagonal((x, y, z, 1))
 V = lambda x, y, z: Vector((x, y, z))
 
+# preview colours = livery 01 of each concept sheet: primary, secondary, accent, neon
 LIVERY = {
-    'kestrel': ('#2f8bff', '#e8eef8', '#ff3050', '#29f3ff'), 'mirage': ('#ff2fb0', '#1a1024', '#29f3ff', '#ff4fd8'),
-    'bastion': ('#ffd400', '#2a2a30', '#ff5a00', '#ffb020'), 'arc': ('#a05cff', '#101018', '#b6ff00', '#b56bff'),
-    'nomad': ('#ff8a1e', '#f2efe6', '#19beb6', '#4de9d2'),
+    'kestrel': ('#d9d5cc', '#55585e', '#3a3d42', '#2ef2e0'), 'mirage': ('#8c8d91', '#46474c', '#b9babd', '#b45cff'),
+    'bastion': ('#a8946a', '#3e3f40', '#e2ddd0', '#3ff0e0'), 'arc': ('#dcdcdc', '#6a6b70', '#3c3e44', '#b45cff'),
+    'nomad': ('#d0612c', '#4a4a4c', '#2f3032', '#2ef2c8'),
 }
 def hexrgb(h):
     h = h.lstrip('#'); c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
@@ -35,17 +38,17 @@ def make_materials(key):
     MAT.clear()
     p, s, a, n = LIVERY[key]
     spec = {
-        'primary': (p, 0.35, 0.25), 'secondary': (s, 0.35, 0.25), 'accent': (a, 0.35, 0.25), 'white': ('#e8eaf0', 0.2, 0.3),
-        'dark': ('#1b1d23', 0.7, 0.42), 'gunmetal': ('#3c414b', 0.9, 0.3), 'metal': ('#c4cad4', 1.0, 0.16), 'inner': ('#0b0c10', 0.4, 0.75),
-        'glass': ('#0a1424', 0.1, 0.03), 'neon': (n, 0, 0.5), 'core': (n, 0, 0.5),
+        'primary': (p, 0.3, 0.5), 'secondary': (s, 0.3, 0.5), 'accent': (a, 0.3, 0.5), 'white': ('#e3e3e0', 0.2, 0.45),
+        'dark': ('#1d1f24', 0.6, 0.5), 'gunmetal': ('#41464f', 0.9, 0.32), 'metal': ('#b9bec6', 1.0, 0.22), 'inner': ('#0b0c10', 0.4, 0.75),
+        'glass': ('#06080d', 0.2, 0.04), 'neon': (n, 0, 0.5), 'core': (n, 0, 0.5), 'warm': ('#ffa020', 0, 0.5),
     }
     for role, (col, met, rough) in spec.items():
         m = bpy.data.materials.new('rr_' + role)
         b = m.node_tree.nodes.get('Principled BSDF')
         b.inputs['Base Color'].default_value = hexrgb(col); b.inputs['Metallic'].default_value = met; b.inputs['Roughness'].default_value = rough
-        if role in ('primary', 'secondary', 'accent', 'white'): b.inputs['Coat Weight'].default_value = 0.8
-        if role in ('neon', 'core'): b.inputs['Emission Color'].default_value = hexrgb(col); b.inputs['Emission Strength'].default_value = 12 if role == 'neon' else 8
-        if role == 'glass': b.inputs['Alpha'].default_value = 0.35
+        if role in ('primary', 'secondary', 'accent', 'white'): b.inputs['Coat Weight'].default_value = 0.15
+        if role in ('neon', 'core', 'warm'): b.inputs['Emission Color'].default_value = hexrgb(col); b.inputs['Emission Strength'].default_value = 10
+        if role == 'glass': b.inputs['Coat Weight'].default_value = 1.0
         MAT[role] = m
 
 PARTS, CUTS = [], []
@@ -66,6 +69,9 @@ def mirror_bm(bm):
 def merge_into(dst, src, M=None):
     if M is not None: bmesh.ops.transform(src, matrix=M, verts=src.verts)
     me = bpy.data.meshes.new('t'); src.to_mesh(me); dst.from_mesh(me); bpy.data.meshes.remove(me); src.free()
+def both(fn):
+    """call fn(side) for the left (+x) and right (-x) side"""
+    for sd in (1, -1): fn(sd)
 
 # ---------------- primitives (game space) ----------------
 def box(w, h, d):
@@ -111,6 +117,7 @@ def sweep(name, role, pts, r, sides=6):
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return emit(bm, name, role)
 
+# smooth loft (used for nacelles): stations [z, half width, half height, centre y, squareness, belly scale]
 def cr(a, b, c, d, t): return 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (-a + 3 * b - 3 * c + d) * t ** 3)
 def resample(st, per):
     st = [list(s) + [0, 2.2, 1][len(s) - 3:] for s in st]
@@ -120,7 +127,6 @@ def resample(st, per):
             a, b, c, d = st[max(0, i - 1)], st[i], st[i + 1], st[min(len(st) - 1, i + 2)]
             out.append([cr(a[j], b[j], c[j], d[j], k / per) for j in range(6)])
     out.append(st[-1]); return out
-# lofted body: stations [z, half width, half height, centre y, squareness, belly scale]
 def hull_bm(stations, sides=40, per=7, off=(0, 0, 0)):
     st = resample(stations, per); bm = new_bm(); rings = []
     for z, w, h, y, p, bel in st:
@@ -139,291 +145,282 @@ def hull_bm(stations, sides=40, per=7, off=(0, 0, 0)):
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return bm, st
 def hull(name, role, stations, off=(0, 0, 0), sides=40, per=7):
-    bm, st = hull_bm(stations, sides, per, off); ob = emit(bm, name, role); return ob, st
-def section_at(st, z): return min(st, key=lambda s: abs(s[0] - z))
-# lifting surface: sections along +x { x, y, le, te, t }
-def yt(x): return 5 * (0.2969 * math.sqrt(x) - 0.126 * x - 0.3516 * x * x + 0.2843 * x ** 3 - 0.1036 * x ** 4)
-def wing_bm(sections, n=16, span_steps=4, u0=0.0, u1=1.0):
-    """airfoil loft; u0/u1 keep only part of the chord (flat end faces where cut)"""
-    um = lambda k: u0 + (u1 - u0) * (1 + math.cos(math.pi * k / n)) / 2  # k = 0 -> u1 (rear), k = n -> u0 (front)
-    lo = n if u0 > 0 else n - 1   # keep the bottom point of a cut front
-    hi = -1 if u1 < 1 else 0      # keep the bottom point of a cut rear
-    prof = [(um(k), 1) for k in range(n + 1)] + [(um(k), -1) for k in range(lo, hi, -1)]
-    secs = []
-    for i in range(len(sections) - 1):
-        a, b = sections[i], sections[i + 1]
-        for k in range(span_steps):
-            t = k / span_steps; secs.append({q: a.get(q, 0) * (1 - t) + b.get(q, 0) * t for q in ('x', 'y', 'le', 'te', 't')})
-    secs.append({q: sections[-1].get(q, 0) for q in ('x', 'y', 'le', 'te', 't')})
+    bm, st = hull_bm(stations, sides, per, off); return emit(bm, name, role), st
+
+# ---------------- faceted hard-surface helpers ----------------
+def sec8(w, h, y=0.0, tw=0.5, bw=0.6, m=0.2):
+    """chined octagon: (x, y) points counter-clockwise from the right side"""
+    w = max(w, 0.003); h = max(h, 0.003)
+    return [(w, y + m * h), (tw * w, y + h), (-tw * w, y + h), (-w, y + m * h), (-w, y - m * h), (-bw * w, y - h), (bw * w, y - h), (w, y - m * h)]
+def prism_bm(stations, off=(0, 0, 0), shape=None):
+    """faceted loft: stations (z, w, h, y=0, tw=.5, bw=.6, m=.2), straight segments between them"""
     bm = new_bm(); rings = []
-    for s in secs:
-        ch = s['le'] - s['te']
-        rings.append([bm.verts.new((s['x'], s['y'] + sg * max(yt(u), 0.0015) * s['t'] * ch, s['le'] - u * ch)) for u, sg in prof])
-    Rn = len(prof)
+    for st in stations:
+        z, rest = st[0], st[1:]
+        pts = (shape or sec8)(*rest)
+        rings.append([bm.verts.new((off[0] + x, off[1] + y, off[2] + z)) for x, y in pts])
+    n = len(rings[0])
     for i in range(len(rings) - 1):
-        for j in range(Rn): bm.faces.new((rings[i][j], rings[i][(j + 1) % Rn], rings[i + 1][(j + 1) % Rn], rings[i + 1][j]))
-    bm.faces.new(rings[0][::-1]); bm.faces.new(rings[-1])
+        for j in range(n):
+            bm.faces.new((rings[i][j], rings[i + 1][j], rings[i + 1][(j + 1) % n], rings[i][(j + 1) % n]))
+    bm.faces.new(rings[0]); bm.faces.new(rings[-1][::-1])
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0005)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return bm
-def wing_at(sections, x, u):  # (z, y) of chord fraction u at span x
-    for a, b in zip(sections, sections[1:]):
-        if min(a['x'], b['x']) <= x <= max(a['x'], b['x']):
-            t = (x - a['x']) / ((b['x'] - a['x']) or 1)
-            le = a['le'] + (b['le'] - a['le']) * t; te = a['te'] + (b['te'] - a['te']) * t; y = a.get('y', 0) + (b.get('y', 0) - a.get('y', 0)) * t
-            return le - u * (le - te), y
-    s = sections[-1]; return s['le'] - u * (s['le'] - s['te']), s.get('y', 0)
-def slot_bm(sections, x0, x1, u=0.74, w=0.035):
-    """cutter that separates a control surface between span x0..x1 behind chord fraction u"""
-    cut = new_bm()
-    def add(a, b):
-        M, L = orient(a, b); merge_into(cut, box(w, 1.2, L + w), M)
-    (z0, y0), (z1, y1) = wing_at(sections, x0, u), wing_at(sections, x1, u)
-    add(V(x0, y0, z0), V(x1, y1, z1))
-    for x in (x0, x1):
-        zh, yh = wing_at(sections, x, u); zt, _ = wing_at(sections, x, 1.0)
-        add(V(x, yh, zh), V(x, yh, zt - 0.3))
-    return cut
-def sec_at(sections, x):
-    for a, b in zip(sections, sections[1:]):
-        if min(a['x'], b['x']) <= x <= max(a['x'], b['x']):
-            t = (x - a['x']) / ((b['x'] - a['x']) or 1)
-            return {q: a.get(q, 0) + (b.get(q, 0) - a.get(q, 0)) * t for q in ('x', 'y', 'le', 'te', 't')}
-    return dict(sections[-1])
-def sub_secs(sections, xa, xb):
-    return [sec_at(sections, xa)] + [s for s in sections if xa < s['x'] < xb] + [sec_at(sections, xb)]
-def surface(name, role, sections, M=None, ctrl=None, sym=False):
-    """wing / fin; M = game-space placement; ctrl = (x0, x1, u): a separate control surface with a hinge gap"""
-    x_root, x_tip = sections[0]['x'], sections[-1]['x']
-    if ctrl:
-        x0, x1, u = ctrl; g = 0.05
-        pieces = [(x_root, x0, 0, 1), (x0, x1, 0, u), (x1, x_tip, 0, 1), (x0 + g, x1 - g, u + 0.015, 1)]
-    else:
-        pieces = [(x_root, x_tip, 0, 1)]
-    obs = []
-    for side in ((1, -1) if sym else (1,)):
-        for i, (xa, xb, ua, ub) in enumerate(pieces):
-            if xb - xa < 0.05: continue
-            bm = wing_bm(sub_secs(sections, xa, xb), 16, 3, ua, ub)
-            if side < 0: mirror_bm(bm)
-            obs.append(emit(bm, f'{name}{"_L" if side > 0 else "_R"}{i}', role, M.copy() if M is not None else None))
-    return obs
-def fin(name, role, sections, x, y, side=1, cant=0.0, ctrl=None):
-    """vertical surface: built along +x then stood up; cant leans the tip outward"""
-    return surface(name, role, sections, T(x, y, 0) @ R(z=math.pi / 2 - side * cant), ctrl)
+def prism(name, role, stations, off=(0, 0, 0), M=None, shape=None, bevel=0.0):
+    return emit(prism_bm(stations, off, shape), name, role, M, bevel)
+def oct_shape(w, h, y=0.0):
+    return sec8(w, h, y, 0.42, 0.42, 0.42)
+def offset_poly(pts, d):
+    n = len(pts); area = sum(pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n)) / 2
+    s = 1 if area > 0 else -1; out = []
+    for i in range(n):
+        p0, p1, p2 = Vector(pts[i - 1]), Vector(pts[i]), Vector(pts[(i + 1) % n])
+        e1 = (p1 - p0).normalized(); e2 = (p2 - p1).normalized()
+        n1 = Vector((-e1.y, e1.x)) * s; n2 = Vector((-e2.y, e2.x)) * s
+        b = n1 + n2
+        if b.length < 1e-6: b = n1
+        b.normalize(); c = max(b.dot(n1), 0.35)
+        out.append(p1 + b * (d / c))
+    return out
+def plate_bm(outline, t=0.2, ch=0.06):
+    """chamfered plate from an (x, z) outline, thickness along y"""
+    inner = offset_poly(outline, ch); bm = new_bm()
+    top = [bm.verts.new((p[0], t / 2, p[1])) for p in inner]
+    mid = [bm.verts.new((p[0], 0, p[1])) for p in outline]
+    bot = [bm.verts.new((p[0], -t / 2, p[1])) for p in inner]
+    n = len(outline)
+    for j in range(n):
+        k = (j + 1) % n
+        bm.faces.new((top[j], top[k], mid[k], mid[j])); bm.faces.new((mid[j], mid[k], bot[k], bot[j]))
+    bm.faces.new(top); bm.faces.new(bot[::-1])
+    bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 4], ngon_method='BEAUTY')
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return bm
+def plate(name, role, outline, t=0.2, ch=0.06, M=None, sym=True):
+    for sd in ((1, -1) if sym else (1,)):
+        bm = plate_bm(outline, t, ch)
+        if sd < 0: mirror_bm(bm)
+        emit(bm, f'{name}{sd}', role, M.copy() if M is not None else None)
+def fin_plate(name, role, outline, x, y, side=1, cant=0.0, t=0.16, ch=0.05):
+    """vertical plate: outline in (height, z); cant leans the top outward"""
+    bm = plate_bm(outline, t, ch)
+    emit(bm, name, role, T(side * x, y, 0) @ R(z=math.pi / 2 - side * cant))
+def crescent(a, b, bulge, width, n=12):
+    """curved blade outline in (h, z) from a to b, bowing by `bulge` toward up/forward"""
+    a, b = Vector(a), Vector(b); d = b - a; nrm = Vector((d.y, -d.x)).normalized()
+    if nrm.x < 0: nrm = -nrm
+    outer = [a + d * (k / n) + nrm * (bulge * math.sin(math.pi * k / n)) for k in range(n + 1)]
+    inner = [a + d * (k / n) + nrm * (bulge * math.sin(math.pi * k / n) - width * math.sin(math.pi * k / n) - 0.06) for k in range(n - 1, 0, -1)]
+    return [(p.x, p.y) for p in outer + inner]
+def quat(M):
+    q = M.to_quaternion(); return [q.x, q.y, q.z, q.w]
+def decal(p, Mrot, s=1.2):
+    META['decals'].append({'p': list(p), 'q': quat(Mrot), 's': s})
+def decal_up(x, y, z, s=1.2): decal((x, y, z), R(x=-math.pi / 2) @ R(z=math.pi if x < 0 else 0), s)
+def decal_side(x, y, z, side, cant=0.0, s=1.0): decal((x, y, z), R(z=-side * cant) @ R(y=side * math.pi / 2), s)
 
-def boolean(ob, cutter, op='DIFFERENCE'):
-    m = ob.modifiers.new('cut', 'BOOLEAN'); m.object = cutter; m.operation = op; m.solver = 'EXACT'
-    CUTS.append(cutter)
-
-# ---------------- reusable assemblies ----------------
-def engine(x, y, z, r, L, name='eng'):
+# ---------------- assemblies ----------------
+def engine(x, y, z, r, L, name='eng', ring=True):
     zb, zf = z - L / 2, z + L / 2
-    hull(name + '_nac', 'dark', [[zf, r, r, 0, 2], [zf - 0.25, r * 1.1, r * 1.1, 0, 2], [zb + 0.3, r * 1.12, r * 1.12, 0, 2], [zb, r * 1.04, r * 1.04, 0, 2]], (x, y, 0), 36, 4)
-    emit(torus(r * 1.03, r * 0.08, 40, 10), name + '_lip', 'metal', T(x, y, zf))
-    petals, pr, pl = 16, r * 0.97, r * 0.8
+    prism(name + '_nac', 'dark', [(zf, r * 0.95, r * 0.95), (zf - 0.2, r * 1.1, r * 1.1), (zb + 0.35, r * 1.12, r * 1.12), (zb, r * 1.04, r * 1.04)], (x, y, 0), shape=lambda w, h: [(math.cos(a) * w, math.sin(a) * h) for a in [k / 12 * math.tau for k in range(12)]])
+    if ring: emit(cyl(r * 1.16, r * 1.16, 0.2, 24), name + '_ring', 'neon', T(x, y, zb + 0.55))
+    petals, pr, pl = 14, r * 0.97, r * 0.65
     for k in range(petals):
         a = k / petals * math.tau
-        Mg = T(x + math.cos(a) * pr, y + math.sin(a) * pr, zb - pl / 2 + 0.05) @ R(z=a - math.pi / 2) @ R(x=0.1)
-        emit(box(r * 0.4, 0.05, pl), f'{name}_pet{k}', 'metal' if k % 2 == 0 else 'gunmetal', Mg, bevel=0.012)
-    emit(torus(r * 1.06, 0.05, 40, 8), name + '_exit', 'gunmetal', T(x, y, zb - pl + 0.08))
-    emit(cyl(r * 0.93, r * 0.93, r * 1.1, 32, caps=False), name + '_liner', 'inner', T(x, y, zb + 0.05))
-    emit(torus(r * 0.84, 0.035, 36, 6), name + '_ab', 'neon', T(x, y, zb + 0.1))
-    emit(disc(r * 0.88, 32), name + '_core', 'core', T(x, y, zb + 0.42) @ R(y=math.pi))
-    emit(cyl(r * 0.26, 0.02, r * 0.75, 18), name + '_cone', 'gunmetal', T(x, y, zb + 0.05) @ R(y=math.pi))
+        Mg = T(x + math.cos(a) * pr, y + math.sin(a) * pr, zb - pl / 2 + 0.05) @ R(z=a - math.pi / 2) @ R(x=-0.12)
+        emit(box(r * 0.44, 0.05, pl), f'{name}_pet{k}', 'gunmetal' if k % 2 else 'dark', Mg, bevel=0.01)
+    emit(torus(r * 0.98, 0.045, 36, 6), name + '_exit', 'gunmetal', T(x, y, zb - pl + 0.1))
+    emit(cyl(r * 0.93, r * 0.93, r * 1.1, 28, caps=False), name + '_liner', 'inner', T(x, y, zb + 0.05))
+    emit(torus(r * 0.82, 0.035, 32, 6), name + '_ab', 'neon', T(x, y, zb + 0.1))
+    emit(disc(r * 0.88, 28), name + '_core', 'core', T(x, y, zb + 0.42) @ R(y=math.pi))
+    emit(cyl(r * 0.26, 0.02, r * 0.7, 16), name + '_cone', 'gunmetal', T(x, y, zb + 0.05) @ R(y=math.pi))
     META['engines'].append({'turb': [x, y, zb + 0.26], 'exit': [x, y, zb - pl + 0.05], 'r': r})
-def gun(x, y, z, L, r, name='gun'):
-    tube(name + '_sh', 'dark', V(x, y, z - 0.25), V(x, y, z + L * 0.35), r * 1.9, 14, bevel=0.01)
-    tube(name + '_b', 'gunmetal', V(x, y, z), V(x, y, z + L), r, 12)
-    tube(name + '_mz', 'metal', V(x, y, z + L - 0.22), V(x, y, z + L), r * 1.55, 14, bevel=0.008)
-    for k in range(3): emit(box(r * 3.2, 0.03, 0.03), f'{name}_vent{k}', 'inner', T(x, y + r * 1.5, z + L - 0.1 - k * 0.05))
-    emit(disc(r * 0.7, 12), name + '_bore', 'inner', T(x, y, z + L + 0.003))
-def missile(x, y, z, L, r, wing_y=None, name='msl'):
-    tube(name + '_body', 'white', V(x, y, z - L / 2), V(x, y, z + L * 0.3), r, 18)
-    emit(cyl(r, 0.01, L * 0.22, 18), name + '_nose', 'accent', T(x, y, z + L * 0.3 + L * 0.11))
-    tube(name + '_nz', 'dark', V(x, y, z - L / 2 - 0.12), V(x, y, z - L / 2 + 0.02), r * 0.8, 14)
-    tube(name + '_band', 'accent', V(x, y, z + L * 0.08), V(x, y, z + L * 0.14), r * 1.02, 18)
-    for k in range(4): emit(box(0.025, r * 2.8, L * 0.16), f'{name}_fin{k}', 'dark', T(x, y, z - L / 2 + L * 0.1) @ R(z=math.pi / 4 + k * math.pi / 2), bevel=0.006)
-    if wing_y is not None:
-        h = wing_y - y - r; emit(box(0.09, h, L * 0.45), name + '_pyl', 'dark', T(x, y + r + h / 2, z), bevel=0.015)
-def canopy(stations, bows, name='canopy'):
-    ob, st = hull(name, 'glass', stations, sides=36, per=7)
-    for i, z in enumerate(bows):
-        _, w, h, y, _, _ = section_at(st, z)
-        pts = [V(math.cos(math.pi * t / 20) * w * 1.02, y + math.sin(math.pi * t / 20) * h * 1.02, z) for t in range(21)]
-        sweep(f'{name}_bow{i}', 'metal', pts, 0.035)
-    for sd in (-1, 1):
-        pts = [V(sd * q[1], q[3], q[0]) for q in st if q[1] > 0.05]
-        if len(pts) > 2: sweep(f'{name}_sill{sd}', 'metal', pts, 0.035, 6)
-    return st
+def missile(x, y, z, L, r, name='msl'):
+    tube(name + '_body', 'white', V(x, y, z - L / 2), V(x, y, z + L * 0.3), r, 14)
+    emit(cyl(r, 0.012, L * 0.2, 14), name + '_nose', 'gunmetal', T(x, y, z + L * 0.3 + L * 0.1))
+    tube(name + '_band', 'warm', V(x, y, z + L * 0.22), V(x, y, z + L * 0.26), r * 1.03, 14)
+    tube(name + '_nz', 'dark', V(x, y, z - L / 2 - 0.1), V(x, y, z - L / 2 + 0.02), r * 0.8, 12)
+    for k in range(4): emit(box(0.022, r * 2.6, L * 0.14), f'{name}_fin{k}', 'dark', T(x, y, z - L / 2 + L * 0.09) @ R(z=math.pi / 4 + k * math.pi / 2))
+def rack(x, y, z, n, L, r, dx, name='rack', top=None):
+    """n missiles side by side under a launcher beam; top = y of the wing underside for the pylon"""
+    for k in range(n): missile(x + (k - (n - 1) / 2) * dx, y, z, L, r, f'{name}_m{k}')
+    emit(box(dx * n + 0.08, 0.1, L * 0.55), name + '_beam', 'dark', T(x, y + r + 0.05, z + 0.1), bevel=0.02)
+    if top is not None:
+        h = top - (y + r + 0.1); emit(box(0.1, max(h, 0.05), L * 0.4), name + '_pyl', 'dark', T(x, y + r + 0.1 + h / 2, z + 0.1), bevel=0.015)
+def gun(x, y, z, L, r, name='gun', barrels=1):
+    tube(name + '_sh', 'dark', V(x, y, z - 0.25), V(x, y, z + L * 0.35), r * 2.2, 10, bevel=0.01)
+    for b in range(barrels):
+        ox = (b - (barrels - 1) / 2) * r * 2.4
+        tube(f'{name}_b{b}', 'gunmetal', V(x + ox, y, z), V(x + ox, y, z + L), r, 10)
+        tube(f'{name}_mz{b}', 'metal', V(x + ox, y, z + L - 0.18), V(x + ox, y, z + L), r * 1.45, 10)
+def gatling(x, y, z, L, r, name='gat'):
+    for k in range(3):
+        a = k / 3 * math.tau + math.pi / 2; ox, oy = math.cos(a) * r * 1.25, math.sin(a) * r * 1.25
+        tube(f'{name}_b{k}', 'gunmetal', V(x + ox, y + oy, z), V(x + ox, y + oy, z + L), r * 0.5, 12)
+        emit(torus(r * 0.5, r * 0.12, 16, 6), f'{name}_glow{k}', 'neon', T(x + ox, y + oy, z + L))
+    for zz in (z + L * 0.35, z + L * 0.8): emit(torus(r * 1.6, r * 0.22, 24, 6), f'{name}_clamp{zz}', 'gunmetal', T(x, y, zz))
+    tube(name + '_hub', 'dark', V(x, y, z - 0.1), V(x, y, z + L * 0.95), r * 0.55, 10)
+def grille(x, y, z, w, h, n, role, axis='x', name='grille', depth=0.06):
+    """n slats across a dark recess facing +z (axis='x' horizontal slats) or +x (axis='z')"""
+    for k in range(n):
+        t = (k + 0.5) / n - 0.5
+        if axis == 'x': emit(box(w, h / n * 0.45, depth), f'{name}{k}', role, T(x, y + t * h, z))
+        else: emit(box(depth, h, w / n * 0.45), f'{name}{k}', role, T(x, y, z + t * w))
+def canopy(stations, bars=(), name='canopy', tw=0.45):
+    prism(name, 'glass', [(z, w, h, y, tw, 0.9, 0.1) for z, w, h, y in stations])
+    for sd in (1, -1):
+        pts = [V(sd * tw * w * 1.02, y + h + 0.01, z) for z, w, h, y in stations if w > 0.06]
+        if len(pts) > 1: sweep(f'{name}_rail{sd}', 'gunmetal', pts, 0.04, 6)
+    z0 = stations[0][0]; z1 = stations[-1][0]
+    bar(name + '_spine', 'gunmetal', V(0, stations[2][3] + stations[2][2] + 0.02, stations[1][0]), V(0, stations[-2][3] + stations[-2][2] + 0.02, stations[-2][0]), 0.06)
 def pilot(x, y, z):
-    emit(sphere(0.2, 24, 16), 'helmet', 'accent', T(x, y, z))
-    emit(sphere(0.205, 24, 16), 'visor', 'glass', T(x, y + 0.01, z + 0.04) @ S(0.9, 0.55, 0.9))
+    emit(sphere(0.19, 20, 14), 'helmet', 'white', T(x, y, z))
+    emit(sphere(0.195, 20, 14), 'visor', 'glass', T(x, y + 0.01, z + 0.04) @ S(0.9, 0.55, 0.9))
     emit(box(0.36, 0.55, 0.14), 'seat', 'dark', T(x, y - 0.12, z - 0.3), bevel=0.03)
-    emit(box(0.5, 0.2, 0.35), 'dash', 'dark', T(x, y - 0.22, z + 0.72), bevel=0.03)
-    emit(box(0.28, 0.12, 0.01), 'hud', 'neon', T(x, y - 0.02, z + 0.78) @ R(x=-0.6))
-def vents(ob, y, z0, n=5, w=0.32, step=0.2):
-    cut = new_bm()
-    for k in range(n): merge_into(cut, box(w * 2, 0.12, 0.07), T(0, y, z0 - k * step))
-    boolean(ob, emit(cut, 'vent_cut', 'dark', keep=True))
-def blade(x, y, z, h=0.45):
-    emit(wing_bm([{'x': 0, 'le': z + 0.25, 'te': z - 0.25, 't': 0.12}, {'x': h, 'le': z - 0.05, 'te': z - 0.3, 't': 0.1}], 8, 1), 'antenna', 'dark', T(x, y, 0) @ R(z=math.pi / 2))
-def pitot(z, y=0):
-    tube('pitot', 'metal', V(0, y, z - 0.3), V(0, y, z + 1.1), 0.03, 10, rb=0.012)
-    tube('pitot_base', 'gunmetal', V(0, y, z - 0.1), V(0, y, z + 0.15), 0.06, 12)
-def intake(x, y, z_front, z_back, w, h, role='primary', name='intake'):
-    ob, _ = hull(name, role, [[z_front, w * 0.95, h * 0.95, 0, 2.6], [z_front - 0.3, w, h, 0, 2.8], [z_back + 1.4, w * 1.02, h * 1.02, 0, 2.8], [z_back, w * 0.3, h * 0.6, 0, 2.4]], (x, y, 0), 28, 4)
-    cb, _ = hull_bm([[z_front + 0.5, w * 0.8, h * 0.8, 0, 2.8], [z_front - 1.2, w * 0.78, h * 0.78, 0, 2.8]], 24, 2, (x, y, 0))
-    boolean(ob, emit(cb, name + '_cut', 'dark', keep=True))
-    emit(disc(1, 24), name + '_duct', 'inner', T(x, y, z_front - 1.15) @ S(w * 0.8, h * 0.8, 1))
-    emit(cyl(0.12, 0.01, 0.3, 14), name + '_spike', 'gunmetal', T(x, y, z_front - 1.0))
+    emit(box(0.28, 0.1, 0.01), 'hud', 'neon', T(x, y - 0.02, z + 0.7) @ R(x=-0.6))
+def neon_slit(x, y, z, L, ry=0.0, w=0.05, h=0.09, name='slit'):
+    emit(box(w, h, L), name, 'neon', T(x, y, z) @ R(y=ry))
 def light(p, color, kind='nav'): META['lights'].append({'p': list(p), 'color': color, 'kind': kind})
 def sym_light(p, kind='nav'): light((p[0], p[1], p[2]), 0xff2030, kind); light((-p[0], p[1], p[2]), 0x20ff60, kind)
+def boolean(ob, cutter, op='DIFFERENCE'):
+    m = ob.modifiers.new('cut', 'BOOLEAN'); m.object = cutter; m.operation = op; m.solver = 'EXACT'; CUTS.append(cutter)
 
-# ---------------- airframes ----------------
+# ---------------- airframes (after the concept sheets) ----------------
 def kestrel():
-    hull('fuselage', 'primary', [[8.9, 0, 0, 0], [8.2, 0.2, 0.14, 0], [6.8, 0.52, 0.36, 0.02, 2.4, 0.8], [4.8, 0.86, 0.6, 0.06, 2.6, 0.75], [2.6, 1.1, 0.8, 0.1, 2.8, 0.7], [0, 1.24, 0.9, 0.1, 2.8, 0.7], [-2.8, 1.24, 0.9, 0.08, 2.8, 0.72], [-5.0, 1.12, 0.92, 0.06, 2.5, 0.85], [-6.2, 1.02, 0.96, 0.04, 2.2, 0.95]])
-    spine, _ = hull('spine', 'primary', [[0.8, 0.02, 0.02, 0.86], [-0.2, 0.34, 0.24, 0.86, 2.6], [-4.4, 0.24, 0.16, 0.86, 2.6], [-5.8, 0.02, 0.02, 0.84]], sides=28, per=5)
-    vents(spine, 1.1, -0.9)
-    canopy([[4.9, 0, 0, 0.8], [4.2, 0.36, 0.3, 0.82], [3.0, 0.54, 0.46, 0.85], [1.6, 0.52, 0.44, 0.86], [0.5, 0.3, 0.28, 0.86], [-0.1, 0.02, 0.02, 0.85]], [3.7, 2.0])
-    pilot(0, 1.02, 2.4)
-    W = [{'x': 0.9, 'y': 0, 'le': 2.9, 'te': -4.5, 't': 0.07}, {'x': 4.0, 'y': 0.07, 'le': -0.6, 'te': -4.6, 't': 0.06}, {'x': 7.2, 'y': 0.15, 'le': -3.5, 'te': -4.75, 't': 0.05}]
-    surface('wing', 'secondary', W, ctrl=(3.4, 6.7, 0.76), sym=True)
+    # long needle nose, faceted fuselage, clipped delta with endplate fins, twin tails, one big engine
+    prism('fuselage', 'primary', [(9.8, 0.02, 0.02, -0.05), (7.6, 0.2, 0.14, -0.02), (5.6, 0.45, 0.3, 0.0), (4.0, 0.72, 0.48, 0.04), (2.2, 0.92, 0.62, 0.06), (0.0, 1.0, 0.7, 0.08), (-3.0, 1.0, 0.72, 0.08), (-4.8, 0.92, 0.74, 0.08), (-5.4, 0.9, 0.74, 0.08)], shape=lambda w, h, y: sec8(w, h, y, 0.42, 0.55, 0.15))
+    prism('spine', 'secondary', [(0.9, 0.04, 0.03, 0.74), (0.0, 0.32, 0.16, 0.76), (-4.4, 0.3, 0.18, 0.78), (-5.2, 0.05, 0.05, 0.76)], shape=lambda w, h, y: sec8(w, h, y, 0.6, 0.9, 0.1))
+    prism('nosepanel', 'secondary', [(6.6, 0.3, 0.07, 0.17), (4.6, 0.52, 0.12, 0.37), (3.9, 0.5, 0.1, 0.42)], shape=lambda w, h, y: sec8(w, h, y, 0.7, 0.9, 0.1))
+    canopy([(4.8, 0.03, 0.03, 0.42), (4.0, 0.36, 0.22, 0.5), (2.4, 0.5, 0.36, 0.58), (0.8, 0.46, 0.33, 0.6), (-0.4, 0.08, 0.06, 0.6)], bars=(3.3, 1.6))
+    pilot(0, 0.75, 2.0)
     for sd in (1, -1):
-        hull(f'tiprail{sd}', 'accent', [[-2.8, 0.02, 0.02], [-3.2, 0.13, 0.13], [-4.9, 0.14, 0.14], [-5.4, 0.03, 0.03]], (sd * 7.3, 0.15, 0), 20, 4)
-        intake(sd * 1.05, -0.05, 3.3, -1.8, 0.36, 0.46, name=f'intake{sd}')
-        bar(f'le_neon{sd}', 'neon', V(sd * 1.0, 0.13, 2.85), V(sd * 7.1, 0.2, -3.42), 0.05)
-        gun(sd * 1.5, 0.02, 2.0, 1.6, 0.07, f'gun{sd}')
-        missile(sd * 3.8, -0.34, -1.6, 2.0, 0.14, -0.02, f'msl{sd}')
-        fin(f'ventral{sd}', 'accent', [{'x': 0, 'le': -3.5, 'te': -5.6, 't': 0.06}, {'x': 0.9, 'le': -4.6, 'te': -5.8, 't': 0.05}], sd * 0.65, -0.5, sd, math.pi - 0.5)
-    surface('canard', 'accent', [{'x': 0.7, 'y': 0.18, 'le': 5.8, 'te': 4.0, 't': 0.08}, {'x': 2.7, 'y': 0.3, 'le': 4.6, 'te': 4.0, 't': 0.06}], sym=True)
-    fin('fin', 'accent', [{'x': 0, 'le': -1.9, 'te': -6.3, 't': 0.08}, {'x': 2.9, 'le': -5.2, 'te': -6.55, 't': 0.05}], 0, 0.85, ctrl=(0.5, 2.5, 0.72))
-    engine(0, 0.05, -6.6, 0.84, 2.4)
-    pitot(8.7); blade(0, 1.08, -3.2); blade(0, -0.62, 1.5, -0.35)
-    bar('spine_neon', 'neon', V(0, 1.11, -0.6), V(0, 1.03, -4.6), 0.07)
-    sym_light((7.33, 0.3, -3.1)); light((0, 3.78, -6.2), 0xffffff, 'strobe'); light((0, -0.72, -1.0), 0xff2030, 'beacon')
-    META['decals'] = [{'p': [0.26, 2.05, -5.25], 'ry': math.pi / 2}, {'p': [-0.26, 2.05, -5.25], 'ry': -math.pi / 2}]
-    META.update(stripe=[0.14, 0.3, 0.5], band=[5.4, 5.9])
+        neon_slit(sd * 0.56, 0.02, 5.0, 0.6, sd * 0.12, name=f'nose_slit{sd}')
+        prism(f'intake{sd}', 'secondary', [(3.0, 0.03, 0.22, 0), (2.6, 0.3, 0.3, 0), (0.0, 0.34, 0.32, 0), (-2.0, 0.08, 0.18, 0)], (sd * 0.98, -0.28, 0))
+        emit(disc(1, 8), f'intake_face{sd}', 'inner', T(sd * 0.98, -0.28, 2.62) @ S(0.24, 0.24, 1) @ R(z=math.pi / 8))
+        gun(sd * 1.3, -0.08, 2.2, 1.1, 0.06, f'gun{sd}')
+        rack(sd * 2.05, -0.36, -0.9, 3, 1.7, 0.11, 0.27, f'rack{sd}', top=-0.1)
+        fin_plate(f'tipfin{sd}', 'primary', [(-0.5, -2.45), (0.15, -2.55), (1.5, -3.5), (1.55, -4.25), (-0.5, -4.05)], 6.55, 0.0, sd, 0.1)
+        neon_slit(sd * 6.62, 0.75, -3.35, 0.7, 0, 0.05, 0.4, f'tip_slit{sd}')
+        fin_plate(f'tail{sd}', 'primary', [(0, -1.8), (0.3, -1.95), (2.0, -3.6), (2.05, -4.3), (0, -4.6)], 0.5, 0.8, sd, 0.22)
+        fin_plate(f'tailcap{sd}', 'secondary', [(1.55, -3.15), (2.0, -3.6), (2.05, -4.3), (1.55, -4.4)], 0.5, 0.8, sd, 0.22, t=0.18)
+        fin_plate(f'ventral{sd}', 'secondary', [(0, -3.2), (0.7, -4.1), (0.7, -4.6), (0, -4.8)], 0.45, -0.55, sd, math.pi - 0.45)
+    plate('wing_in', 'primary', [(0.9, 2.2), (3.9, -0.6), (2.6, -4.2), (0.9, -4.2)], 0.2, 0.06)
+    plate('wing_out', 'secondary', [(3.9, -0.6), (6.5, -2.9), (6.5, -3.85), (2.78, -3.7)], 0.2, 0.06)
+    plate('aileron', 'secondary', [(3.05, -3.8), (6.4, -3.95), (6.4, -4.35), (3.05, -4.2)], 0.14, 0.04)
+    plate('canard', 'primary', [(0.75, 4.4), (2.3, 3.3), (2.3, 2.95), (0.75, 3.1)], 0.12, 0.04, T(0, 0.05, 0))
+    engine(0, 0.08, -5.9, 0.8, 2.0)
+    sym_light((6.62, 1.55, -3.95)); light((0.62, 2.85, -4.3), 0xffffff, 'strobe'); light((0, -0.72, -1.0), 0xff2030, 'beacon')
+    decal_side(0.5 + 0.22 * 1.1 + 0.1, 0.8 + 1.05, -3.3, 1, 0.22, 0.9); decal_side(-(0.5 + 0.22 * 1.1 + 0.1), 0.8 + 1.05, -3.3, -1, 0.22, 0.9)
+    META.update(stripe=[0.16, 0.3, 0.55], band=[4.6, 5.1])
 
 def mirage():
-    hull('fuselage', 'primary', [[6.8, 0, 0, 0], [6.1, 0.2, 0.14, 0], [4.8, 0.55, 0.38, 0.02, 2.4, 0.8], [2.6, 0.95, 0.68, 0.06, 2.6, 0.75], [0, 1.2, 0.82, 0.06, 2.8, 0.75], [-2.4, 1.15, 0.78, 0.04, 2.6, 0.8], [-3.9, 0.75, 0.58, 0.02, 2.3, 0.9]])
-    spine, _ = hull('spine', 'primary', [[0.6, 0.02, 0.02, 0.8], [-0.2, 0.3, 0.2, 0.8, 2.6], [-2.8, 0.22, 0.14, 0.8, 2.6], [-3.6, 0.02, 0.02, 0.78]], sides=24, per=5)
-    vents(spine, 0.98, -0.6, 4, 0.26)
-    canopy([[4.5, 0, 0, 0.72], [3.9, 0.38, 0.32, 0.74], [2.7, 0.58, 0.46, 0.78], [1.3, 0.52, 0.42, 0.8], [0.2, 0.02, 0.02, 0.78]], [3.4, 1.8])
-    pilot(0, 0.95, 2.1)
-    W = [{'x': 0.9, 'y': 0.02, 'le': 2.7, 'te': -3.4, 't': 0.07}, {'x': 3.2, 'y': 0.06, 'le': 1.8, 'te': -2.2, 't': 0.065}, {'x': 5.8, 'y': 0.12, 'le': 0.5, 'te': -2.2, 't': 0.06}, {'x': 8.3, 'y': 0.2, 'le': -0.9, 'te': -2.6, 't': 0.055}]
-    surface('wing', 'secondary', W, ctrl=(4.6, 7.6, 0.74), sym=True)
+    # crescent flying wing, curved claws at the tips with engine pods, launchers beside the cockpit
+    prism('body', 'primary', [(5.6, 0.03, 0.03, -0.08), (4.4, 0.35, 0.2, -0.02), (2.8, 0.74, 0.4, 0.04), (0.8, 1.0, 0.52, 0.08), (-1.6, 1.05, 0.52, 0.08), (-3.4, 0.7, 0.42, 0.06), (-3.9, 0.3, 0.28, 0.05)], shape=lambda w, h, y: sec8(w, h, y, 0.5, 0.6, 0.12))
+    prism('bodytop', 'secondary', [(1.6, 0.2, 0.05, 0.56), (0.6, 0.45, 0.08, 0.6), (-2.6, 0.42, 0.08, 0.58), (-3.3, 0.15, 0.05, 0.5)], shape=lambda w, h, y: sec8(w, h, y, 0.8, 0.9, 0.1))
+    canopy([(3.9, 0.03, 0.03, 0.32), (3.1, 0.44, 0.24, 0.4), (1.6, 0.6, 0.36, 0.48), (0.2, 0.52, 0.33, 0.52), (-0.9, 0.08, 0.06, 0.5)], bars=(2.4,), tw=0.5)
+    pilot(0, 0.66, 1.4)
+    plate('wing', 'secondary', [(0.95, 1.6), (3.4, 0.9), (5.8, -0.1), (7.9, -1.3), (8.2, -2.6), (6.0, -1.9), (3.6, -1.2), (1.0, -2.6)], 0.24, 0.07)
+    plate('wing_le', 'primary', [(0.95, 2.15), (3.4, 1.45), (5.8, 0.45), (8.0, -0.75), (7.9, -1.3), (5.8, -0.1), (3.4, 0.9), (0.95, 1.6)], 0.24, 0.07)
+    plate('wing_flap', 'primary', [(3.8, -1.3), (6.0, -2.0), (6.0, -2.35), (3.8, -1.7)], 0.14, 0.04)
     for sd in (1, -1):
-        hull(f'pod{sd}', 'accent', [[1.7, 0.02, 0.02], [1.1, 0.4, 0.4, 0, 2.2], [0.2, 0.6, 0.6, 0, 2.3], [-2.4, 0.64, 0.64, 0, 2.3], [-3.2, 0.58, 0.58, 0, 2.3]], (sd * 8.7, 0.2, 0), 36, 5)
-        engine(sd * 8.7, 0.2, -3.9, 0.52, 1.4, f'eng{sd}')
-        fin(f'podfin{sd}', 'primary', [{'x': 0, 'le': -0.9, 'te': -3.0, 't': 0.07}, {'x': 1.5, 'le': -2.3, 'te': -3.3, 't': 0.05}], sd * 8.7, 0.7, sd, 0.12, ctrl=(0.3, 1.3, 0.7))
-        fin(f'podkeel{sd}', 'primary', [{'x': 0, 'le': -1.6, 'te': -3.0, 't': 0.07}, {'x': 0.7, 'le': -2.4, 'te': -3.1, 't': 0.05}], sd * 8.7, -0.3, sd, math.pi - 0.15)
-        gun(sd * 9.25, 0.05, 0.2, 1.4, 0.06, f'gun{sd}')
-        missile(sd * 4.6, -0.3, -0.5, 1.8, 0.13, 0.05, f'msl{sd}')
-        le = [V(sd * 0.9, 0.12, 2.7), V(sd * 3.2, 0.16, 1.8), V(sd * 5.8, 0.22, 0.5), V(sd * 8.2, 0.3, -0.85)]
-        for k in range(3): bar(f'le{sd}{k}', 'neon', le[k], le[k + 1], 0.05)
-        bar(f'podneon{sd}', 'neon', V(sd * 8.7, 0.85, 1.0), V(sd * 8.7, 0.86, -2.6), 0.05)
-        intake(sd * 1.1, -0.18, 1.2, -2.6, 0.22, 0.3, name=f'intake{sd}')
-    engine(0, 0.04, -4.3, 0.56, 1.2)
-    pitot(6.6); blade(0, 0.96, -2.4, 0.4)
-    bar('spine_neon', 'neon', V(0, 1.0, -0.2), V(0, 0.95, -3.0), 0.06)
-    sym_light((9.36, 0.2, -0.6)); light((0, 0.95, -3.6), 0xffffff, 'strobe'); light((0, -0.58, 0.5), 0xff2030, 'beacon')
-    META['decals'] = [{'p': [8.92, 1.45, -2.45], 'ry': math.pi / 2}, {'p': [-8.92, 1.45, -2.45], 'ry': -math.pi / 2}]
-    META.update(stripe=[0.12, 0.26, 0.45], band=[6.6, 7.1])
+        fin_plate(f'claw{sd}', 'primary', crescent((-1.4, 2.2), (2.1, -4.0), 1.0, 0.6), 8.55, 0.15, sd, 0.15, t=0.32, ch=0.1)
+        prism(f'pod{sd}', 'secondary', [(1.1, 0.12, 0.12), (0.6, 0.42, 0.42), (-1.8, 0.46, 0.46), (-2.2, 0.42, 0.42)], (sd * 8.05, 0.2, 0), shape=oct_shape)
+        neon_slit(sd * 8.52, 0.2, -0.6, 1.4, 0, 0.05, 0.2, f'pod_slit{sd}')
+        engine(sd * 8.05, 0.2, -2.6, 0.4, 0.8, f'eng{sd}')
+        emit(box(0.42, 0.42, 1.3), f'launcher{sd}', 'secondary', T(sd * 1.08, 0.08, 1.6), bevel=0.04)
+        for k in range(4):
+            px, py = sd * 1.08 + (0.1 if k % 2 else -0.1), 0.08 + (0.1 if k < 2 else -0.1)
+            emit(disc(0.065, 10), f'tube{sd}{k}', 'inner', T(px, py, 2.26)); emit(torus(0.065, 0.018, 12, 4), f'tubeglow{sd}{k}', 'neon', T(px, py, 2.27))
+        neon_slit(sd * 0.62, -0.18, 3.0, 0.7, sd * 0.2, 0.05, 0.08, f'chin{sd}')
+        emit(box(0.1, 0.4, 0.8), f'pylon{sd}', 'dark', T(sd * 4.6, -0.28, -0.4), bevel=0.02)
+        missile(sd * 4.6, -0.6, -0.4, 1.8, 0.15, f'msl{sd}')
+    sym_light((8.7, 1.4, -3.4)); light((0, 0.75, -3.2), 0xffffff, 'strobe'); light((0, -0.5, 0.5), 0xff2030, 'beacon')
+    decal_up(5.0, 0.13, -1.0, 1.4); decal_up(-5.0, 0.13, -1.0, 1.4)
+    META.update(stripe=[0.2, 0.36, 0.5], band=[6.2, 6.7])
 
 def bastion():
-    body, _ = hull('fuselage', 'primary', [[6.8, 0.1, 0.1, 0.05], [5.8, 0.7, 0.5, 0.05, 3, 0.7], [3.8, 1.35, 0.95, 0.12, 3.2, 0.7], [1, 1.7, 1.25, 0.14, 3.4, 0.7], [-1.8, 1.72, 1.28, 0.12, 3.4, 0.72], [-3.6, 1.3, 1.0, 0.06, 3, 0.8], [-4.2, 0.6, 0.6, 0.04, 2.6, 0.9]])
-    vents(body, 1.45, -0.4, 6, 0.6, 0.22)
-    canopy([[4.7, 0, 0, 1.15], [4.1, 0.5, 0.32, 1.18], [2.9, 0.8, 0.5, 1.22], [1.5, 0.78, 0.48, 1.24], [0.3, 0.05, 0.05, 1.22]], [3.6, 2.2, 1.0])
-    pilot(0, 1.42, 2.3)
-    W = [{'x': 1.4, 'y': 0.25, 'le': 1.6, 'te': -2.3, 't': 0.12}, {'x': 8.4, 'y': 0.32, 'le': 0.9, 'te': -2.0, 't': 0.1}]
-    surface('wing', 'secondary', W, ctrl=(5.6, 8.0, 0.72), sym=True)
+    # heavy gunship: rotary cannons beside the cockpit, twin top engines with glowing grilles, straight wings, missile racks
+    prism('body', 'primary', [(6.4, 0.25, 0.2, -0.1), (5.6, 0.75, 0.5, -0.05), (4.0, 1.15, 0.8, 0.05), (2.0, 1.3, 0.95, 0.12), (-1.0, 1.3, 0.95, 0.15), (-3.5, 1.0, 0.8, 0.2), (-6.5, 0.55, 0.55, 0.35), (-7.6, 0.45, 0.5, 0.4)], shape=lambda w, h, y: sec8(w, h, y, 0.55, 0.7, 0.25))
+    prism('chin', 'secondary', [(5.9, 0.4, 0.12, -0.42), (4.2, 0.85, 0.2, -0.62), (2.0, 0.95, 0.22, -0.72)], shape=lambda w, h, y: sec8(w, h, y, 0.9, 0.7, 0.2))
+    canopy([(4.8, 0.03, 0.03, 0.62), (4.0, 0.55, 0.3, 0.72), (2.5, 0.72, 0.45, 0.86), (1.0, 0.65, 0.42, 0.9), (0.0, 0.1, 0.1, 0.88)], bars=(3.2, 1.8), tw=0.5)
+    pilot(0, 1.12, 1.9)
+    prism('hump', 'secondary', [(0.2, 0.3, 0.1, 1.0), (-0.6, 0.62, 0.22, 1.08), (-1.4, 0.62, 0.22, 1.1), (-1.8, 0.4, 0.15, 1.05)], shape=lambda w, h, y: sec8(w, h, y, 0.8, 0.9, 0.2))
     for sd in (1, -1):
-        hull(f'boom{sd}', 'primary', [[3.8, 0.05, 0.05], [3.0, 0.8, 0.8, 0, 2.6], [1.5, 1.02, 1.02, 0, 2.6], [-5.2, 1.04, 1.04, 0, 2.6], [-7.0, 0.95, 0.95, 0, 2.6]], (sd * 4.6, 0.25, 0), 40, 5)
-        engine(sd * 4.6, 0.25, -7.8, 0.92, 1.6, f'eng{sd}')
-        fin(f'fin{sd}', 'accent', [{'x': 0, 'le': -4.0, 'te': -6.9, 't': 0.08}, {'x': 2.9, 'le': -5.9, 'te': -7.3, 't': 0.06}], sd * 4.6, 0.95, sd, 0, ctrl=(0.4, 2.0, 0.72))
-        emit(box(0.22, 1.1, 3.3), f'tipplate{sd}', 'accent', T(sd * 8.48, 0.32, -0.55), bevel=0.05)
-        emit(box(0.26, 0.95, 3.8), f'armor{sd}', 'accent', T(sd * 5.72, 0.3, 0.4), bevel=0.06)
-        emit(box(0.1, 0.5, 2.6), f'armor_in{sd}', 'dark', T(sd * 5.88, 0.3, 0.4), bevel=0.02)
-        for k in range(4):
-            by, bz = 0.3 + (0.32 if k % 2 else -0.32), 0.4 + (1.6 if k < 2 else -1.6)
-            tube(f'bolt{sd}{k}', 'metal', V(sd * 5.84, by, bz), V(sd * 5.9, by, bz), 0.05, 8)
-        emit(box(0.95, 0.75, 2.4), f'pod{sd}', 'dark', T(sd * 6.6, -0.2, -0.3), bevel=0.06)
-        emit(box(0.97, 0.12, 2.42), f'podband{sd}', 'accent', T(sd * 6.6, 0.05, -0.3), bevel=0.02)
-        for k in range(4):
-            px, py = sd * 6.6 + (0.22 if k % 2 else -0.22), -0.2 + (0.18 if k < 2 else -0.18)
-            emit(disc(0.14, 16), f'podtube{sd}{k}', 'inner', T(px, py, 0.905)); emit(cyl(0.11, 0.01, 0.3, 14), f'podwarhead{sd}{k}', 'white', T(px, py, 0.95))
-        emit(box(0.12, 0.3, 1.4), f'podpylon{sd}', 'dark', T(sd * 6.6, 0.25, -0.3), bevel=0.02)
-        gun(sd * 1.45, -0.25, 3.4, 1.8, 0.09, f'gun{sd}')
-        bar(f'tipneon{sd}', 'neon', V(sd * 8.6, 0.3, 0.7), V(sd * 8.6, 0.3, -1.85), 0.1)
-        bar(f'boomneon{sd}', 'neon', V(sd * 4.6, 1.3, 2.0), V(sd * 4.6, 1.3, -5.6), 0.07)
-        intake(sd * 0.85, -0.6, 3.1, -2.2, 0.38, 0.3, 'dark', f'intake{sd}')
-    surface('htail', 'secondary', [{'x': -4.7, 'le': -6.1, 'te': -7.1, 't': 0.08}, {'x': 4.7, 'le': -6.1, 'te': -7.1, 't': 0.08}], T(0, 3.0, 0))
-    emit(sphere(0.45, 24, 16), 'turret', 'dark', T(0, -0.85, 4.2))
-    for sd in (-1, 1): tube(f'tgun{sd}', 'gunmetal', V(sd * 0.16, -0.9, 4.4), V(sd * 0.16, -0.9, 5.9), 0.07, 12)
-    pitot(6.6, 0.05); blade(0, 1.38, -2.4, 0.5)
-    sym_light((8.6, 0.95, -0.4)); light((0, 3.15, -6.6), 0xffffff, 'strobe'); light((0, -0.78, -1.5), 0xff2030, 'beacon')
-    META['decals'] = [{'p': [4.88, 2.45, -6.25], 'ry': math.pi / 2}, {'p': [-4.88, 2.45, -6.25], 'ry': -math.pi / 2}]
-    META.update(stripe=[0.25, 0.55, 0.9], band=[6.9, 7.5])
+        prism(f'gunpod{sd}', 'secondary', [(3.9, 0.3, 0.3), (3.4, 0.56, 0.56), (-1.0, 0.6, 0.6), (-2.0, 0.4, 0.45)], (sd * 1.95, -0.05, 0), shape=oct_shape)
+        gatling(sd * 1.95, -0.05, 3.85, 1.3, 0.2, f'gat{sd}')
+        prism(f'engbox{sd}', 'secondary', [(-0.9, 0.5, 0.42), (-1.2, 0.6, 0.5), (-4.4, 0.6, 0.5), (-4.9, 0.5, 0.42)], (sd * 0.9, 1.35, 0), shape=lambda w, h, y=0: sec8(w, h, y, 0.85, 0.85, 0.5))
+        emit(box(0.8, 0.58, 0.04), f'grille_back{sd}', 'warm', T(sd * 0.9, 1.35, -0.86))
+        grille(sd * 0.9, 1.35, -0.82, 0.9, 0.6, 5, 'dark', 'x', f'grille{sd}', 0.08)
+        emit(box(1.0, 0.08, 0.7), f'engcap{sd}', 'dark', T(sd * 0.9, 1.88, -2.4), bevel=0.02)
+        engine(sd * 0.9, 1.35, -5.35, 0.42, 0.9, f'eng{sd}')
+        fin_plate(f'fin{sd}', 'primary', [(0, -3.6), (0.4, -3.8), (2.8, -5.6), (2.85, -6.4), (0, -6.6)], 1.6, 1.4, sd, 0.08, t=0.2)
+        fin_plate(f'fintip{sd}', 'secondary', [(2.2, -5.0), (2.8, -5.6), (2.85, -6.4), (2.2, -6.5)], 1.6, 1.4, sd, 0.08, t=0.22)
+        for i, x in enumerate((3.3, 5.4)): rack(sd * x, -0.48, -0.1, 3, 1.5, 0.11, 0.25, f'rack{sd}{i}', top=-0.04)
+        for k in range(2): emit(box(0.16, 0.02, 1.2), f'stripe{sd}{k}', 'accent', T(sd * (5.7 + k * 0.32), 0.25, -0.5))
+    plate('wing', 'primary', [(1.3, 1.2), (6.6, 0.5), (6.6, -1.5), (1.3, -2.4)], 0.28, 0.07, T(0, 0.1, 0))
+    plate('wing_le', 'secondary', [(1.3, 1.6), (6.6, 0.85), (6.6, 0.5), (1.3, 1.2)], 0.28, 0.07, T(0, 0.1, 0))
+    plate('wing_tip', 'secondary', [(6.6, 0.85), (7.4, 0.55), (7.7, -0.2), (7.4, -1.4), (6.6, -1.5)], 0.28, 0.07, T(0, 0.1, 0))
+    plate('flap', 'secondary', [(2.0, -2.45), (6.4, -1.6), (6.4, -1.95), (2.0, -2.8)], 0.16, 0.04, T(0, 0.1, 0))
+    sym_light((7.72, 0.12, -0.2)); light((1.72, 4.2, -6.2), 0xffffff, 'strobe'); light((0, -0.9, -1.5), 0xff2030, 'beacon')
+    decal_up(4.4, 0.25, -0.6, 1.4); decal_up(-4.4, 0.25, -0.6, 1.4)
+    META.update(stripe=[0.3, 0.5, 0.9], band=[6.7, 7.0])
 
 def arc():
+    # twin prongs with a beam between them, central body with radiators, swept wings, underwing cannons
     for sd in (1, -1):
-        hull(f'prong{sd}', 'primary', [[8.4, 0, 0, 0], [7.6, 0.18, 0.15, 0], [6.0, 0.38, 0.32, 0, 2.4], [3.0, 0.58, 0.48, 0, 2.6], [0, 0.7, 0.58, 0, 2.6], [-1.2, 0.72, 0.6, 0, 2.6]], (sd * 1.05, 0, 0), 32, 6)
-        bar(f'prong_in{sd}', 'neon', V(sd * 0.5, 0.05, 7.0), V(sd * 0.38, 0.05, 1.2), 0.06)
-        bar(f'prong_top{sd}', 'neon', V(sd * 1.05, 0.5, 6.2), V(sd * 1.05, 0.62, 0.4), 0.05)
-    body, _ = hull('body', 'primary', [[2.2, 0.2, 0.2, 0.3], [1.2, 1.1, 0.62, 0.2, 2.6, 0.8], [-1.5, 1.6, 0.85, 0.15, 2.8, 0.75], [-4.4, 1.45, 0.8, 0.08, 2.8, 0.8], [-5.8, 1.15, 0.7, 0.04, 2.6, 0.9]])
-    vents(body, 1.0, -2.8, 5, 0.4)
-    canopy([[1.7, 0, 0, 0.92], [1.1, 0.4, 0.3, 0.94], [-0.1, 0.56, 0.44, 0.97], [-1.4, 0.5, 0.4, 0.99], [-2.4, 0.02, 0.02, 0.97]], [0.6, -0.9])
-    pilot(0, 1.14, -0.4)
-    tube('emitter', 'gunmetal', V(0, 0.05, 1.6), V(0, 0.05, 6.1), 0.22, 24)
-    for i, z in enumerate((2.6, 3.4, 4.2, 5.0, 5.7)): emit(torus(0.42 - (z - 2.6) * 0.03, 0.065, 36, 10), f'coil{i}', 'metal', T(0, 0.05, z))
-    for z in (3.0, 4.6): bar(f'strut{z}', 'dark', V(-0.85, 0.05, z), V(0.85, 0.05, z), 0.1)
-    emit(torus(0.3, 0.03, 30, 6), 'focus', 'neon', T(0, 0.05, 6.12))
-    META['emitter'] = [0, 0.05, 6.35]
-    W = [{'x': 1.4, 'y': 0.05, 'le': 0.9, 'te': -3.6, 't': 0.07}, {'x': 4.5, 'y': 0.12, 'le': -1.8, 'te': -4.4, 't': 0.06}, {'x': 7.6, 'y': 0.2, 'le': -4.4, 'te': -5.3, 't': 0.05}]
-    surface('wing', 'secondary', W, ctrl=(4.0, 7.0, 0.72), sym=True)
-    for sd in (1, -1):
-        engine(sd * 0.85, 0.1, -6.3, 0.64, 1.6, f'eng{sd}')
-        fin(f'fin{sd}', 'accent', [{'x': 0, 'le': -2.6, 'te': -5.7, 't': 0.08}, {'x': 2.3, 'le': -4.7, 'te': -5.9, 't': 0.05}], sd * 1.3, 0.7, sd, 0.35, ctrl=(0.4, 1.9, 0.72))
-        emit(box(0.32, 0.5, 2.6), f'capbank{sd}', 'dark', T(sd * 1.62, 0.25, -2.2), bevel=0.04)
-        bar(f'capneon{sd}', 'neon', V(sd * 1.8, 0.35, -1.0), V(sd * 1.8, 0.35, -3.4), 0.05)
-        bar(f'le{sd}', 'neon', V(sd * 1.5, 0.14, 0.8), V(sd * 7.5, 0.24, -4.35), 0.05)
-        hull(f'tiprail{sd}', 'accent', [[-3.7, 0.02, 0.02], [-4.1, 0.12, 0.12], [-5.3, 0.13, 0.13], [-5.7, 0.03, 0.03]], (sd * 7.65, 0.2, 0), 20, 4)
-        gun(sd * 3.3, 0.06, -1.2, 1.2, 0.06, f'gun{sd}')
-        missile(sd * 5.2, -0.25, -3.2, 1.6, 0.12, 0.08, f'msl{sd}')
-    blade(0, 0.95, -4.5, 0.4)
-    sym_light((7.66, 0.36, -4.4)); light((0, 0.92, -5.4), 0xffffff, 'strobe'); light((0, -0.5, -1.5), 0xff2030, 'beacon')
-    META['decals'] = [{'p': [2.05, 2.0, -5.0], 'ry': math.pi / 2 - 0.35}, {'p': [-2.05, 2.0, -5.0], 'ry': -math.pi / 2 + 0.35}]
-    META.update(stripe=[0.3, 0.45, 0.6], band=[5.8, 6.2])
+        prism(f'prong{sd}', 'primary', [(8.4, 0.06, 0.06, 0), (7.6, 0.3, 0.24, 0), (6.0, 0.42, 0.34, 0.02), (2.0, 0.5, 0.42, 0.05), (-0.6, 0.55, 0.45, 0.08)], (sd * 1.0, 0, 0), shape=lambda w, h, y: sec8(w, h, y, 0.45, 0.55, 0.2))
+        prism(f'prongtop{sd}', 'secondary', [(6.8, 0.15, 0.04, 0.3), (3.0, 0.3, 0.06, 0.45), (0.0, 0.3, 0.06, 0.5)], (sd * 1.0, 0, 0), shape=lambda w, h, y: sec8(w, h, y, 0.8, 0.9, 0.1))
+        neon_slit(sd * 0.74, 0.0, 7.4, 0.9, -sd * 0.18, 0.05, 0.14, f'prong_tip{sd}')
+        emit(torus(0.16, 0.05, 16, 6), f'node{sd}', 'gunmetal', T(sd * 0.72, 0, 6.6) @ R(y=math.pi / 2))
+        bar(f'rail{sd}', 'dark', V(sd * 0.55, 0.0, 2.6), V(sd * 0.8, 0.0, 2.6), 0.16)
+        emit(box(0.42, 0.55, 2.0), f'radiator{sd}', 'dark', T(sd * 1.45, 0.12, -1.3), bevel=0.03)
+        grille(sd * 1.67, 0.12, -1.3, 1.9, 0.5, 11, 'gunmetal', 'z', f'rad_fins{sd}', 0.06)
+        prism(f'nacelle{sd}', 'secondary', [(-1.6, 0.2, 0.2), (-2.2, 0.38, 0.38), (-5.7, 0.4, 0.4), (-6.0, 0.36, 0.36)], (sd * 1.25, 0.38, 0), shape=oct_shape)
+        engine(sd * 1.25, 0.38, -6.3, 0.34, 0.8, f'eng{sd}')
+        fin_plate(f'fin{sd}', 'primary', [(0, -4.2), (0.3, -4.4), (1.25, -5.4), (1.25, -5.8), (0, -6.0)], 1.25, 0.72, sd, 0.3)
+        emit(box(0.32, 0.32, 1.3), f'gunpod{sd}', 'dark', T(sd * 3.3, -0.36, -3.0), bevel=0.03)
+        emit(box(0.1, 0.3, 0.8), f'gunpyl{sd}', 'dark', T(sd * 3.3, -0.08, -3.0), bevel=0.02)
+        gun(sd * 3.3, -0.36, -2.5, 1.6, 0.055, f'gun{sd}', 2)
+    tube('rod', 'metal', V(-0.72, 0, 6.6), V(0.72, 0, 6.6), 0.055, 10)
+    META['emitter'] = [0, 0, 6.6]
+    bar('beam', 'neon', V(0, 0, 6.45), V(0, 0, 2.45), 0.05)
+    emit(torus(0.24, 0.06, 20, 6), 'lens_ring', 'gunmetal', T(0, 0, 2.42)); emit(disc(0.22, 20), 'lens', 'neon', T(0, 0, 2.43))
+    prism('body', 'primary', [(3.0, 0.3, 0.25, 0.2), (2.2, 0.75, 0.45, 0.25), (0.0, 1.0, 0.6, 0.3), (-3.0, 1.05, 0.6, 0.3), (-5.5, 0.8, 0.5, 0.3)], shape=lambda w, h, y: sec8(w, h, y, 0.5, 0.6, 0.2))
+    canopy([(2.6, 0.03, 0.03, 0.55), (1.9, 0.42, 0.25, 0.65), (0.6, 0.55, 0.36, 0.75), (-0.8, 0.5, 0.34, 0.78), (-2.0, 0.08, 0.06, 0.76)], bars=(1.3,))
+    pilot(0, 0.98, 0.4)
+    plate('wing', 'primary', [(1.6, -1.0), (6.4, -4.4), (6.5, -4.75), (1.6, -3.9)], 0.18, 0.05, T(0, 0.1, 0))
+    plate('aileron', 'secondary', [(3.4, -4.0), (6.4, -4.85), (6.4, -5.2), (3.4, -4.4)], 0.12, 0.03, T(0, 0.1, 0))
+    sym_light((6.5, 0.2, -4.7)); light((0, 0.95, -5.0), 0xffffff, 'strobe'); light((0, -0.35, -2.0), 0xff2030, 'beacon')
+    decal_up(4.1, 0.2, -3.3, 1.3); decal_up(-4.1, 0.2, -3.3, 1.3)
+    META.update(stripe=[0.2, 0.36, 0.6], band=[5.2, 5.6])
 
 def nomad():
-    body, _ = hull('fuselage', 'primary', [[7.8, 0, 0, 0], [7.0, 0.22, 0.16, 0], [5.6, 0.55, 0.4, 0.02, 2.4, 0.8], [3, 1.0, 0.8, 0.06, 2.6, 0.75], [-1.5, 1.12, 0.88, 0.06, 2.7, 0.75], [-4.8, 0.8, 0.68, 0.1, 2.5, 0.85], [-6.4, 0.4, 0.42, 0.16, 2.3, 0.9]])
-    vents(body, 0.96, -2.6, 4, 0.32)
-    canopy([[5.0, 0, 0, 0.78], [4.3, 0.38, 0.3, 0.8], [3.0, 0.56, 0.45, 0.84], [1.6, 0.52, 0.42, 0.86], [0.4, 0.02, 0.02, 0.84]], [3.8, 2.2])
-    pilot(0, 1.06, 2.6)
-    W = [{'x': 0.9, 'y': 0.05, 'le': 1.8, 'te': -1.8, 't': 0.08}, {'x': 6.4, 'y': 0.25, 'le': -0.5, 'te': -2.0, 't': 0.06}]
-    surface('wing', 'secondary', W, ctrl=(3.6, 6.0, 0.72), sym=True)
+    # blunt faceted nose with neon slits, two octagonal intakes with U-shaped glow, swept wings, V-tail
+    prism('body', 'primary', [(6.9, 0.3, 0.12, -0.1), (6.0, 0.6, 0.3, -0.05), (4.2, 0.9, 0.5, 0.05), (2.0, 1.0, 0.62, 0.12), (-1.5, 1.05, 0.65, 0.15), (-4.5, 0.85, 0.6, 0.15), (-5.8, 0.6, 0.45, 0.12)], shape=lambda w, h, y: sec8(w, h, y, 0.55, 0.75, 0.2))
+    prism('dorsal', 'secondary', [(1.2, 0.3, 0.06, 0.76), (0.2, 0.62, 0.1, 0.8), (-3.6, 0.6, 0.1, 0.76), (-4.6, 0.3, 0.06, 0.72)], shape=lambda w, h, y: sec8(w, h, y, 0.85, 0.9, 0.2))
+    canopy([(4.6, 0.03, 0.03, 0.42), (3.8, 0.45, 0.25, 0.52), (2.2, 0.62, 0.4, 0.62), (0.6, 0.55, 0.36, 0.68), (-0.6, 0.08, 0.06, 0.66)], bars=(3.0, 1.4), tw=0.5)
+    pilot(0, 0.98, 1.6)
     for sd in (1, -1):
-        fin(f'winglet{sd}', 'accent', [{'x': 0, 'le': -0.6, 'te': -2.0, 't': 0.07}, {'x': 1.0, 'le': -1.4, 'te': -2.1, 't': 0.05}], sd * 6.42, 0.25, sd, 0.3)
-        nac, _ = hull(f'nacelle{sd}', 'accent', [[2.4, 0.6, 0.6, 0, 2.2], [2.0, 0.72, 0.72, 0, 2.3], [1.0, 0.78, 0.78, 0, 2.3], [-3.4, 0.82, 0.82, 0, 2.3], [-4.1, 0.75, 0.75, 0, 2.3]], (sd * 2.6, -0.15, 0), 40, 5)
-        cb, _ = hull_bm([[2.8, 0.6, 0.6, 0, 2.2], [1.6, 0.6, 0.6, 0, 2.2]], 32, 2, (sd * 2.6, -0.15, 0))
-        boolean(nac, emit(cb, f'nac_cut{sd}', 'dark', keep=True))
-        emit(torus(0.64, 0.07, 40, 10), f'naclip{sd}', 'metal', T(sd * 2.6, -0.15, 2.42))
-        emit(disc(0.62, 32), f'nacback{sd}', 'inner', T(sd * 2.6, -0.15, 1.7))
-        emit(cyl(0.2, 0.01, 0.45, 18), f'spinner{sd}', 'gunmetal', T(sd * 2.6, -0.15, 2.05))
-        for k in range(14): emit(box(0.07, 0.42, 0.02), f'fan{sd}{k}', 'gunmetal', T(sd * 2.6, -0.15, 1.85) @ R(z=k / 14 * math.tau) @ T(0, 0.37, 0) @ R(y=0.5))
-        emit(box(0.16, 0.42, 2.6), f'pylon{sd}', 'dark', T(sd * 2.6, 0.48, -0.5), bevel=0.03)
-        engine(sd * 2.6, -0.15, -4.6, 0.74, 1.2, f'eng{sd}')
-        fin(f'vtail{sd}', 'secondary', [{'x': 0, 'le': -3.6, 'te': -6.2, 't': 0.08}, {'x': 3.0, 'le': -5.6, 'te': -6.7, 't': 0.05}], sd * 0.3, 0.55, sd, 0.75, ctrl=(0.5, 2.6, 0.72))
-        bar(f'tipneon{sd}', 'neon', V(sd * 6.4, 0.32, -0.45), V(sd * 6.7, 0.32, -1.8), 0.1)
-        bar(f'nacneon{sd}', 'neon', V(sd * 2.6, 0.62, 1.5), V(sd * 2.6, 0.68, -3.4), 0.06)
-        gun(sd * 0.55, -0.18, 5.0, 1.5, 0.065, f'gun{sd}')
-        missile(sd * 4.3, -0.32, -0.7, 1.7, 0.13, 0.1, f'msla{sd}'); missile(sd * 5.3, -0.28, -0.9, 1.5, 0.12, 0.16, f'mslb{sd}')
-    emit(sphere(1, 32, 16), 'dome', 'dark', T(0, 0.9, -1.4) @ S(0.38, 0.2, 0.65))
-    emit(torus(1, 0.04, 40, 6), 'domering', 'neon', T(0, 0.93, -1.4) @ R(x=math.pi / 2) @ S(0.38, 0.65, 1))
-    pitot(7.6); blade(0, -0.62, 0.5, -0.35)
-    sym_light((6.5, 1.25, -1.9)); light((0, 0.62, -6.5), 0xffffff, 'strobe'); light((0, -0.65, -1.0), 0xff2030, 'beacon')
-    META['decals'] = [{'p': [3.44, -0.15, -1.2], 'ry': math.pi / 2}, {'p': [-3.44, -0.15, -1.2], 'ry': -math.pi / 2}]
-    META.update(stripe=[0.14, 0.28, 0.5], band=[5.0, 5.4])
+        neon_slit(sd * 0.26, -0.06, 6.86, 0.3, 0, 0.05, 0.1, f'nose_slit{sd}')
+        nac = prism(f'nacelle{sd}', 'secondary', [(2.6, 0.6, 0.6), (2.2, 0.66, 0.66), (-3.6, 0.66, 0.66), (-4.6, 0.55, 0.55)], (sd * 1.95, -0.05, 0), shape=oct_shape)
+        boolean(nac, emit(prism_bm([(3.2, 0.46, 0.46), (1.8, 0.46, 0.46)], (sd * 1.95, -0.05, 0), oct_shape), f'nac_cut{sd}', 'dark', keep=True))
+        emit(disc(0.5, 8), f'intake_back{sd}', 'inner', T(sd * 1.95, -0.05, 1.82) @ R(z=math.pi / 8))
+        for a, b in (((-0.24, 0.24), (-0.24, -0.2)), ((-0.24, -0.2), (0.24, -0.2)), ((0.24, -0.2), (0.24, 0.24))):
+            bar(f'u{sd}{a}{b}', 'neon', V(sd * 1.95 + a[0], -0.05 + a[1], 1.95), V(sd * 1.95 + b[0], -0.05 + b[1], 1.95), 0.07)
+        plate(f'nactop{sd}', 'primary', [(-0.32, 2.2), (0.32, 2.2), (0.32, -3.4), (-0.32, -3.4)], 0.08, 0.03, T(sd * 1.95, 0.66, 0), sym=False)
+        engine(sd * 1.95, -0.05, -5.0, 0.5, 0.9, f'eng{sd}')
+        fin_plate(f'vtail{sd}', 'primary', [(0, -2.8), (0.4, -3.1), (2.9, -4.9), (2.95, -5.5), (0, -5.8)], 0.65, 0.55, sd, 0.55, t=0.18)
+        fin_plate(f'vtailtip{sd}', 'secondary', [(2.2, -4.35), (2.9, -4.9), (2.95, -5.5), (2.2, -5.6)], 0.65, 0.55, sd, 0.55, t=0.2)
+        for i, (x, z) in enumerate(((3.9, -1.0), (5.1, -1.5))):
+            emit(box(0.1, 0.3, 0.7), f'pylon{sd}{i}', 'dark', T(sd * x, -0.22, z + 0.1), bevel=0.02)
+            missile(sd * x, -0.5, z, 1.6, 0.13, f'msl{sd}{i}')
+    plate('wing', 'primary', [(2.5, 0.2), (7.6, -2.6), (7.65, -2.95), (2.5, -2.75)], 0.2, 0.06)
+    plate('wing_dark', 'secondary', [(2.5, 0.2), (4.2, -0.75), (4.2, -2.82), (2.5, -2.75)], 0.22, 0.06)
+    plate('flap', 'secondary', [(2.8, -2.85), (7.6, -3.05), (7.6, -3.4), (2.8, -3.3)], 0.14, 0.04)
+    sym_light((7.66, 0.12, -2.8)); light((0.65 + 0.55 * 2.9, 0.55 + 2.5, -5.2), 0xffffff, 'strobe'); light((0, -0.6, -1.0), 0xff2030, 'beacon')
+    decal_up(5.0, 0.12, -1.9, 1.2); decal_up(-5.0, 0.12, -1.9, 1.2)
+    META.update(stripe=[0.22, 0.4, 0.7], band=[6.4, 6.9])
 
 DESIGNS = {'kestrel': kestrel, 'mirage': mirage, 'bastion': bastion, 'arc': arc, 'nomad': nomad}
 
@@ -441,7 +438,7 @@ def apply_mods(ob):
     if not ob.modifiers: return
     dg = bpy.context.evaluated_depsgraph_get(); ev = ob.evaluated_get(dg)
     me = bpy.data.meshes.new_from_object(ev); ob.modifiers.clear(); old = ob.data; ob.data = me; bpy.data.meshes.remove(old)
-def smooth_by_angle(ob, deg=38):
+def smooth_by_angle(ob, deg=30):
     bm = bmesh.new(); bm.from_mesh(ob.data)
     for f in bm.faces: f.smooth = True
     for e in bm.edges: e.smooth = e.is_manifold and e.calc_face_angle(0) <= math.radians(deg)
@@ -480,7 +477,7 @@ def bake_ao(ob, key, size=1024):
         n.select = True; nt.nodes.active = n
         g = nt.nodes.new('ShaderNodeGroup'); g.node_tree = grp; g.name = 'glTF Material Output'
         sep = nt.nodes.new('ShaderNodeSeparateColor'); nt.links.new(n.outputs['Color'], sep.inputs['Color']); nt.links.new(sep.outputs['Red'], g.inputs['Occlusion'])
-    sc = bpy.context.scene; sc.world.light_settings.distance = 1.6
+    sc = bpy.context.scene; sc.world.light_settings.distance = 1.2
     bpy.ops.object.bake(type='AO', margin=6, use_clear=True)
     img.pack()
     return img
@@ -513,15 +510,13 @@ def build(key):
 def render(key):
     sc = bpy.context.scene; setup_cycles(96); sc.cycles.use_denoising = True
     sc.render.resolution_x, sc.render.resolution_y = 1280, 720
-    w = sc.world; bg = w.node_tree.nodes['Background']; bg.inputs['Color'].default_value = (0.09, 0.05, 0.12, 1); bg.inputs['Strength'].default_value = 0.6
-    sun = bpy.data.objects.new('sun', bpy.data.lights.new('sun', 'SUN')); sun.data.energy = 4.5; sun.data.color = (1, 0.82, 0.68); sun.rotation_euler = (math.radians(50), 0, math.radians(35)); sc.collection.objects.link(sun)
-    rim = bpy.data.objects.new('rim', bpy.data.lights.new('rim', 'AREA')); rim.data.energy = 2500; rim.data.size = 8; rim.data.color = (0.4, 0.7, 1); rim.location = (-14, 10, 6); sc.collection.objects.link(rim)
-    rim.rotation_euler = (-rim.location).to_track_quat('-Z', 'Y').to_euler()
-    floor = bpy.data.objects.new('floor', bpy.data.meshes.new('floor')); bm = bmesh.new(); bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=60); bm.to_mesh(floor.data); bm.free()
-    floor.location.z = -2.2; fm = bpy.data.materials.new('floor'); fm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.25, 0.1, 0.07, 1); floor.data.materials.append(fm); sc.collection.objects.link(floor)
+    w = sc.world; bg = w.node_tree.nodes['Background']; bg.inputs['Color'].default_value = (0.55, 0.53, 0.52, 1); bg.inputs['Strength'].default_value = 0.7
+    sun = bpy.data.objects.new('sun', bpy.data.lights.new('sun', 'SUN')); sun.data.energy = 4.0; sun.data.angle = 0.2; sun.rotation_euler = (math.radians(40), 0, math.radians(30)); sc.collection.objects.link(sun)
+    floor = bpy.data.objects.new('floor', bpy.data.meshes.new('floor')); bm = bmesh.new(); bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=80); bm.to_mesh(floor.data); bm.free()
+    floor.location.z = -2.6; fm = bpy.data.materials.new('floor'); fm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.62, 0.6, 0.58, 1); floor.data.materials.append(fm); sc.collection.objects.link(floor)
     cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam')); cam.data.lens = 50; sc.collection.objects.link(cam); sc.camera = cam
-    for name, pos in (('front', (16, -17, 7)), ('rear', (-13, 19, 5.5))):
-        cam.location = pos; cam.rotation_euler = (Vector((0, -0.5, 0.2)) - Vector(pos)).to_track_quat('-Z', 'Y').to_euler()
+    for name, pos in (('front', (-15, -16, 9)), ('rear', (13, 18, 6.5))):
+        cam.location = pos; cam.rotation_euler = (Vector((0, -0.3, 0.2)) - Vector(pos)).to_track_quat('-Z', 'Y').to_euler()
         sc.render.filepath = os.path.join(RENDER, f'{key}_{name}.png'); bpy.ops.render.render(write_still=True)
 
 for key in (ONLY or list(DESIGNS)):

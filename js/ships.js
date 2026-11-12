@@ -94,7 +94,8 @@ export function makeMaterials(liv, finishKey = 'gloss', meta = {}, ao = null) {
     gunmetal: std(0x3c414b, 0.9, 0.3),
     metal: std(0xc4cad4, 1, 0.16),
     inner: std(0x0b0c10, 0.4, 0.75, THREE.DoubleSide),
-    glass: new THREE.MeshPhysicalMaterial({ color: 0x0a1424, metalness: 0.1, roughness: 0.02, clearcoat: 1, transparent: true, opacity: 0.78, iridescence: 0.8, iridescenceIOR: 1.35, emissive: neonColor.clone().multiplyScalar(0.08), depthWrite: false }),
+    glass: new THREE.MeshPhysicalMaterial({ color: 0x05070b, metalness: 0.2, roughness: 0.04, clearcoat: 1, transparent: true, opacity: 0.93, iridescence: 0.5, iridescenceIOR: 1.3, emissive: neonColor.clone().multiplyScalar(0.05) }),
+    warm: new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffa020).multiplyScalar(2.4) }),
     neon: new THREE.MeshBasicMaterial({ color: neonColor.clone().multiplyScalar(3.2) }),
     core: new THREE.MeshBasicMaterial({ color: neonColor.clone().lerp(new THREE.Color(1, 1, 1), 0.35).multiplyScalar(2.2), side: THREE.DoubleSide }),
     flame: flameMaterial(liv.neon), neonColor,
@@ -123,7 +124,7 @@ export function buildShip(shipKey, liv, finish = 'gloss', number = ++racerNum) {
   const refs = { flames: [], glows: [], turbines: [], lights: [], mats: M };
   for (const p of D.parts) {
     const mesh = new THREE.Mesh(p.geo, M[p.role] || M.dark);
-    const lit = !['neon', 'core', 'glass'].includes(p.role); mesh.castShadow = lit; mesh.receiveShadow = lit;
+    const lit = !['neon', 'core', 'glass', 'warm'].includes(p.role); mesh.castShadow = lit; mesh.receiveShadow = lit;
     if (p.role === 'glass') mesh.renderOrder = 2;
     body.add(mesh);
   }
@@ -144,7 +145,11 @@ export function buildShip(shipKey, liv, finish = 'gloss', number = ++racerNum) {
   });
   if (meta.emitter) { const em = new THREE.Mesh(new THREE.SphereGeometry(0.36, 16, 12), M.neon); em.position.set(...meta.emitter); body.add(em); refs.emitter = em; }
   const decMat = new THREE.MeshStandardMaterial({ map: numberTexture(number, liv), roughness: 0.4, polygonOffset: true, polygonOffsetFactor: -2 });
-  for (const d of meta.decals || []) { const p = new THREE.Mesh(DECAL_GEO, decMat); p.position.set(...d.p); p.rotation.y = d.ry; body.add(p); }
+  for (const d of meta.decals || []) {
+    const p = new THREE.Mesh(DECAL_GEO, decMat); p.position.set(...d.p);
+    if (d.q) p.quaternion.set(...d.q); else p.rotation.y = d.ry;
+    p.scale.setScalar((d.s || 1.4) / 1.4); body.add(p);
+  }
   // shield bubble
   const shield = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
     uniforms: { uColor: { value: new THREE.Color(0x4cf0ff) }, uA: { value: 0 }, uTime: { value: 0 } },

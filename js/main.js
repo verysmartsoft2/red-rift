@@ -33,7 +33,8 @@ const DEF = { ship: 0, liveryIdx: 0, livery: { ...SHIP_LIVERIES[0][0] }, finish:
 let S = { ...DEF };
 try { const raw = localStorage.getItem('redrift.settings'); if (raw) S = { ...DEF, ...JSON.parse(raw) }; } catch (e) { /* storage blocked */ }
 if (!(S.ship >= 0 && S.ship < SHIPS.length)) S.ship = 0;
-if (S.liveryIdx > 4 || !S.livery) { S.liveryIdx = 0; S.livery = { ...SHIP_LIVERIES[S.ship][0] }; }
+if (S.liveryIdx > 4 || !S.livery) S.liveryIdx = 0;
+if (S.liveryIdx >= 0) S.livery = { ...SHIP_LIVERIES[S.ship][S.liveryIdx] }; // follow the current livery set
 const save = () => { try { localStorage.setItem('redrift.settings', JSON.stringify(S)); } catch (e) { /* ignore */ } };
 const GFX = [{ name: 'НИЗКАЯ', pr: 0.75, shadows: false, bloom: 0.6 }, { name: 'СРЕДНЯЯ', pr: 1.25, shadows: true, bloom: 0.8 }, { name: 'ВЫСОКАЯ', pr: 2, shadows: true, bloom: 0.85 }];
 
@@ -111,11 +112,11 @@ function setupHangar() {
   const f = frameAt(-140, newFrame());
   hangarPos.copy(f.p).addScaledVector(f.r, -60); hangarPos.y = TRACK.floorY[0] + 16;
   const disc = new THREE.Mesh(new THREE.CylinderGeometry(16, 18, 1.5, 48), new THREE.MeshStandardMaterial({ color: 0x15151c, metalness: 0.9, roughness: 0.25 }));
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(17, 0.35, 8, 96), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2f6a).multiplyScalar(4) }));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(17, 0.35, 8, 96), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2f6a).multiplyScalar(1.6) }));
   ring.rotation.x = Math.PI / 2; ring.position.y = 0.8;
-  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(13, 0.2, 8, 96), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x29f3ff).multiplyScalar(4) }));
+  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(13, 0.2, 8, 96), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x29f3ff).multiplyScalar(1.6) }));
   ring2.rotation.x = Math.PI / 2; ring2.position.y = 0.8;
-  const beam = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex(), color: 0xff2f6a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.18 }));
+  const beam = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex(), color: 0xff2f6a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.08 }));
   beam.scale.set(34, 5, 1); beam.position.y = 1;
   pad.add(disc, ring, ring2, beam); pad.position.copy(hangarPos).add(new THREE.Vector3(0, -6, 0));
   const spot = new THREE.SpotLight(0xffffff, 900, 120, 0.6, 0.6, 1.4); spot.position.set(20, 40, 25); spot.target = pad; pad.add(spot);
@@ -702,7 +703,7 @@ function loop() {
   if (mode === 'menu' || !race) {
     menuA += rdt * 0.25;
     if (displayShip) { displayShip.rotation.y += rdt * 0.4; displayShip.position.y = hangarPos.y + Math.sin(menuA * 3) * 0.6; updateShipFx(displayShip, menuA * 4, 0.8); }
-    camera.position.copy(hangarPos).add(tv.set(Math.cos(menuA) * 30, 7 + Math.sin(menuA * 0.7) * 3, Math.sin(menuA) * 30));
+    camera.position.copy(hangarPos).add(tv.set(Math.cos(menuA) * 27, 10 + Math.sin(menuA * 0.7) * 2.5, Math.sin(menuA) * 27));
     camera.up.set(0, 1, 0); camera.lookAt(tv2.copy(hangarPos).add(new THREE.Vector3(innerWidth > 760 ? 0 : 0, 1, 0)));
     camera.fov = 50; camera.updateProjectionMatrix();
     W.update(rdt, FAR, false, hangarPos);

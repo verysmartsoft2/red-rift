@@ -52,22 +52,28 @@ export const LIVERIES = [
   { name: 'КОБАЛЬТ', primary: '#0b3cff', secondary: '#ff7b16', accent: '#f6f7ff', neon: '#43edff' },
   { name: 'ЗОЛОТО', primary: '#ffcc33', secondary: '#1b1b1f', accent: '#ff2a2a', neon: '#ffd84a' },
 ];
-// Five paint schemes per ship: factory colours first, then four picked from the shared set.
-const FACTORY = [
-  { name: 'ЗАВОДСКАЯ', primary: '#2f8bff', secondary: '#e8eef8', accent: '#ff3050', neon: '#29f3ff' },
-  { name: 'ЗАВОДСКАЯ', primary: '#ff2fb0', secondary: '#1a1024', accent: '#29f3ff', neon: '#ff4fd8' },
-  { name: 'ЗАВОДСКАЯ', primary: '#ffd400', secondary: '#2a2a30', accent: '#ff5a00', neon: '#ffb020' },
-  { name: 'ЗАВОДСКАЯ', primary: '#a05cff', secondary: '#101018', accent: '#b6ff00', neon: '#b56bff' },
-  { name: 'ЗАВОДСКАЯ', primary: '#ff8a1e', secondary: '#f2efe6', accent: '#19beb6', neon: '#4de9d2' },
+// Five paint schemes per ship, taken from the concept sheets (references/.../02_Aircraft_and_Liveries):
+// three base schemes from each ship's sheet, then RACING (sheet 06) and VOLT (sheet 07).
+// primary = main hull, secondary = second panel colour, accent = stripes/tips, neon = lights and engine glow.
+const L = (name, primary, secondary, accent, neon) => ({ name, primary, secondary, accent, neon });
+export const SHIP_LIVERIES = [
+  [L('КОСТЬ', '#d9d5cc', '#55585e', '#3a3d42', '#2ef2e0'), L('ДЮНА', '#c8ab84', '#6b5a45', '#3e3428', '#ffb03a'), L('ГРАФИТ', '#7d8086', '#4a4d52', '#2c2e33', '#2ef2e0'),
+    L('RACING', '#1f4fd8', '#1f4fd8', '#ff7a1a', '#2ef2e0'), L('VOLT', '#ece9e4', '#ece9e4', '#ff2aa0', '#2ef2e0')],
+  [L('ТЕНЬ', '#8c8d91', '#46474c', '#b9babd', '#b45cff'), L('ЛУНА', '#d8d8dc', '#8f9aa8', '#5d6470', '#b45cff'), L('МЕДЬ', '#a86a4a', '#3a3433', '#c98a62', '#b45cff'),
+    L('RACING', '#c8237a', '#c8237a', '#f2f2f2', '#32e6e0'), L('VOLT', '#22d3e0', '#1c2846', '#e63946', '#b45cff')],
+  [L('ПУСТЫНЯ', '#a8946a', '#3e3f40', '#e2ddd0', '#3ff0e0'), L('СТАЛЬ', '#5a5c60', '#2f3134', '#c9c9c9', '#3ff0e0'), L('ПАТРУЛЬ', '#dcd8cc', '#5a6648', '#ff7a1a', '#3ff0e0'),
+    L('RACING', '#d7e021', '#2a2b2d', '#f2f2f2', '#3ff0e0'), L('VOLT', '#c8202c', '#2a2b2d', '#f2f2f2', '#3ff0e0')],
+  [L('ЖЕМЧУГ', '#dcdcdc', '#6a6b70', '#3c3e44', '#b45cff'), L('НОЧЬ', '#3a3c42', '#26282d', '#6d7078', '#2ef2e0'), L('СЕРЕБРО', '#9a9ca2', '#5d5f64', '#d0d2d6', '#ffb03a'),
+    L('RACING', '#7a2ce0', '#2ee6e6', '#f2f2f2', '#b45cff'), L('VOLT', '#ffd21a', '#23252b', '#9b4dff', '#b45cff')],
+  [L('РЖАВЧИНА', '#d0612c', '#4a4a4c', '#2f3032', '#2ef2c8'), L('КРЕМ', '#ddd3bf', '#6fd6b8', '#9c917c', '#2ef2c8'), L('ШАЛФЕЙ', '#6c6e70', '#8fb89a', '#d0612c', '#2ef2c8'),
+    L('RACING', '#ff7a1a', '#1fc8b8', '#f2f2f2', '#2ef2c8'), L('VOLT', '#a8f01e', '#1d4fd8', '#f2f2f2', '#2ef2c8')],
 ];
-const PICKS = [[8, 3, 0, 5], [0, 4, 7, 1], [9, 2, 5, 6], [4, 1, 6, 3], [2, 6, 8, 7]];
-export const SHIP_LIVERIES = FACTORY.map((f, i) => [f, ...PICKS[i].map(k => LIVERIES[k])]);
 
 export const FINISHES = [
-  { key: 'gloss', name: 'Глянец', metalness: 0.35, roughness: 0.22, clearcoat: 1 },
-  { key: 'metal', name: 'Металлик', metalness: 0.75, roughness: 0.3, clearcoat: 0.6 },
+  { key: 'gloss', name: 'Лак', metalness: 0.3, roughness: 0.36, clearcoat: 0.5 },
+  { key: 'metal', name: 'Металлик', metalness: 0.7, roughness: 0.34, clearcoat: 0.3 },
   { key: 'chrome', name: 'Хром', metalness: 1.0, roughness: 0.08, clearcoat: 1 },
-  { key: 'matte', name: 'Матовый', metalness: 0.15, roughness: 0.75, clearcoat: 0 },
+  { key: 'matte', name: 'Матовый', metalness: 0.25, roughness: 0.62, clearcoat: 0 },
 ];
 export const PALETTE = ['#ff2d95', '#ff3050', '#ff5a00', '#ffb020', '#ffe600', '#b6ff00', '#00ff9c', '#00e5ff', '#2a6bff', '#7a2cff', '#ff2fd0', '#f4f4f8', '#9aa0aa', '#15171c'];
 
