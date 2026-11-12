@@ -308,6 +308,8 @@ function renderLobby(list) {
 function hostLobby() { const list = [profile(), ...mp.guests.values()]; renderLobby(list); net.send({ t: 'lobby', list }); }
 function hostSend(force) {
   const now = performance.now();
+  // a guest that went silent for 5 s (dropped connection without a close) is handed to a bot
+  for (const [peer, idx] of mp.seats) { const r = race.racers[idx]; if (r && r.remote && r._seen && now - r._seen > 5000) net.emit('leave', peer); }
   if (!force && now - mp.lastSnap < 50) return;
   mp.lastSnap = now; net.send(snapshot(race, mp.outbox)); mp.outbox = [];
 }
@@ -336,7 +338,7 @@ net.on('msg', (d, from) => {
       const r = race.racers[mp.seats.get(from)]; if (!r || !r.remote) return;
       r.input.steer = d.steer; r.input.climb = d.climb; r.input.fire = d.fire; r.input.brake = d.brake;
       if (d.m > (r._m || 0)) r.input.missile = true; if (d.e > (r._e || 0)) r.input.item = true; if (d.q > (r._q || 0)) r.input.ability = true;
-      r._m = d.m; r._e = d.e; r._q = d.q;
+      r._m = d.m; r._e = d.e; r._q = d.q; r._seen = performance.now();
       if (d.sp === r.spawnId && !r.dead) r.net = d.n;
     }
   } else {
@@ -639,7 +641,7 @@ function updateRaceVisuals(dt, rdt) {
     updateShipFx(m, gtime, power, { shield: (r.shield > 0 ? 0.55 : 0) + (r.dome > 0 ? 0.9 : 0), overload: r.fx.overload > 0 });
     const hpF = r.hp / r.maxHp;
     m.userData.refs.setDamage(Math.max(0, Math.min(1, 1 - hpF)));
-    fx.damageSmoke(pos, hpF, dt);
+    if (r !== P || Math.random() < 0.35) fx.damageSmoke(r === P ? tv2.copy(pos).addScaledVector(f0.t, -6) : pos, hpF, dt); // own smoke thinner and behind, so it does not flood the camera
     if (hpF < 0.35) for (const ex of m.userData.refs.exits) { // engine failure: fire and black smoke from the nozzles
       if (Math.random() < dt * 14) { const wp = m.userData.body.localToWorld(ex.clone()); fx.add.emit(wp, new THREE.Vector3((Math.random() - 0.5) * 3, 1.5, (Math.random() - 0.5) * 3), new THREE.Color(0.95, 0.4, 0.08), 1.1, 0.2, { grow: 1 }); if (Math.random() < 0.5) fx.smoke.emit(wp, new THREE.Vector3(0, 3, 0), new THREE.Color(0x141210), 2.2, 1.6, { grow: 6, alpha: 0.6 }); }
     }
