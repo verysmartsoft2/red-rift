@@ -145,4 +145,40 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px s
   #hud .bl { width: 180px; }
   .speed b { font-size: 36px; }
 }
+/* touch controls */
+#touch { position: fixed; inset: 0; z-index: 12; pointer-events: none; touch-action: none; }
+#touch.hidden { display: none; }
+#stick { position: absolute; left: max(24px, env(safe-area-inset-left)); bottom: 28px; width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(41,243,255,0.5); background: rgba(10,4,20,0.35); pointer-events: auto; touch-action: none; }
+#stickKnob { position: absolute; left: 50%; top: 50%; width: 62px; height: 62px; margin: -31px; border-radius: 50%; background: rgba(41,243,255,0.35); border: 2px solid var(--cyan); }
+.tbtns { position: absolute; right: max(18px, env(safe-area-inset-right)); bottom: 24px; display: grid; grid-template-columns: repeat(3, 74px); gap: 8px; pointer-events: auto; }
+.tbtns button { height: 64px; padding: 0; font-size: 12px; background: rgba(10,4,20,0.5); touch-action: none; }
+.tbtns button.big { background: rgba(255,47,106,0.35); border-color: var(--hot); font-size: 14px; }
+.tbtns button.on { background: rgba(41,243,255,0.4); border-color: var(--cyan); }
+#tPause { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); pointer-events: auto; padding: 6px 14px; }
+body.touch #hud .bl { bottom: 272px; }
+body.touch #hud .br { bottom: 172px; }
+body.touch .feed { display: none; }
+@media (max-width: 760px) {
+  #stick { width: 120px; height: 120px; }
+  #stickKnob { width: 50px; height: 50px; margin: -25px; }
+  .tbtns { grid-template-columns: repeat(3, 58px); gap: 6px; }
+  .tbtns button { height: 54px; font-size: 11px; letter-spacing: 0.02em; }
+  body.touch #hud .br { bottom: 150px; }
+  body.touch #hud .bl { bottom: 250px; }
+}
+/* phone in landscape: everything along the bottom edge */
+@media (max-height: 500px) {
+  #stick { width: 120px; height: 120px; bottom: 16px; }
+  .tbtns { bottom: 12px; grid-template-columns: repeat(3, 58px); gap: 6px; }
+  .tbtns button { height: 50px; font-size: 11px; }
+  body.touch #hud .bl { bottom: 14px; left: 160px; width: 150px; }
+  body.touch #hud .br { bottom: 14px; right: 216px; gap: 6px; }
+  body.touch .slot { width: 66px; min-height: 56px; padding: 6px; font-size: 9px; }
+  body.touch .slot kbd { display: none; }
+  body.touch .slot .ico { font-size: 22px; }
+  body.touch .ring { width: 30px; height: 30px; }
+  body.touch .speed b { font-size: 30px; }
+  body.touch #minimap { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) { .center.popin, .hitmark.on, .feed div { animation: none; } }

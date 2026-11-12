@@ -2,13 +2,13 @@
 // cliff exit, stone arches, destructible spires, flagship wreck, force fields, neon guides, sky.
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as THREE from 'three';
-import { TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
+import { S, TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
 import { fbm, ridged, noise2, smooth, lerp, clamp, rng } from './noise.js';
 import { makeRockMaterial, forceFieldMaterial, softTex, smokeTex } from './shaders.js';
 import { buildCapitalFleet } from './capital.js';
 
-const S = 1.45;
-const HALF = 2400, G = 600; // inner terrain: 4800 m, 8 m cells
+const KS = S / 1.45; // scale relative to the original 11 km layout
+const HALF = 3400, G = 700; // inner terrain: 6800 m, ~9.7 m cells
 let CX = 0, CZ = 0;
 let HF = null; // Float32Array heights (G+1)^2
 
@@ -27,7 +27,7 @@ export function baseHeight(x, z) {
   let h = 6 + m * 310 + ridged(x * 0.0021, z * 0.0021) * 46 * m + fbm(x * 0.004, z * 0.004, 3) * 14;
   // valley basin (elongated along the wreck + dune sectors)
   const bd = segDist(x, z, -300 * S, 1180 * S, -1180 * S, 260 * S);
-  const bm = 1 - smooth(560, 1100, bd);
+  const bm = 1 - smooth(560 * KS, 1100 * KS, bd);
   h = lerp(h, VALLEY_FLOOR + dunes(x, z), bm);
   return h;
 }

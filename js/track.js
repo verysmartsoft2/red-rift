@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { rng, clamp } from './noise.js';
 
-const S = 1.45; // map scale
+export const S = 2.33; // map scale: gives an ~18 km lap
 // x, z, centreY, halfWidth, halfHeight, sector
 const RAW = [
   [0, -1100, 300, 95, 70, 'start'],
@@ -189,10 +189,10 @@ function buildFeatures() {
   const ws = w0 + (w1 - w0) * 0.55;
   for (let k = 0; k < 9; k++) F.ribs.push({ s: ws + (k - 4) * 34, r: 155 });
   F.wreckS = ws;
-  // pickup groups: 8 per lap, 5 cases across the corridor
-  const L = TRACK.length;
-  for (let g = 0; g < 8; g++) {
-    const s = 700 + g * (L / 8);
+  // pickup groups: 9 per lap (every ~2 km from 1 km), 5 cases across the corridor
+  const L = TRACK.length, k18 = L / 18000;
+  for (let g = 0; g < 9; g++) {
+    const s = (1000 + g * 2000) * k18;
     const b = bounds(s);
     for (let k = 0; k < 5; k++) {
       const x = b.tunnel ? (k - 2) * 14 : (k - 2) * Math.min(b.hw * 0.35, 30);
@@ -205,9 +205,12 @@ function buildFeatures() {
   for (let k = 0; k < 4; k++) {
     const s = c0 + 120 + k * 110;
     const cy = TRACK.py[idx(s)];
-    F.pickups.push({ s, x: 0, y: (VALLEY_FLOOR + 40 + (3 - k) * 30) - cy + 60 - k * 25, group: 8 + k, id: F.pickups.length });
+    F.pickups.push({ s, x: 0, y: (VALLEY_FLOOR + 40 + (3 - k) * 30) - cy + 60 - k * 25, group: 9, id: F.pickups.length });
   }
-  for (let s = 0; s < L; s += 500) F.checkpoints.push(s);
+  // checkpoints every ~1 km, passed in order; the last one is the start/finish line
+  const nCp = Math.max(1, Math.round(L / 1000));
+  for (let k = 1; k <= nCp; k++) F.checkpoints.push(k * L / nCp);
+  F.groups = 10;
   // boost rings (fly through = short speed burst)
   for (const s of [RANGES.canyon[0] + 300, RANGES.dunes[0] + 350, RANGES.climb[0] + 250, RANGES.wreck[0] + 120]) {
     F.boostRings.push({ s, x: 0, y: 10 });

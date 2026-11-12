@@ -1,9 +1,10 @@
 // Race simulation (DOM-free, fixed 60 Hz). Racers, weapons, items, obstacles, AI.
 import { TRACK, FEATURES, bounds, wrapS, idx, frameAt, newFrame, typeAt } from './track.js';
-import { RACE, SHIPS, LASERS, MISSILES, ITEMS, AI_LEVELS, AI_NAMES, LIVERIES } from './config.js';
+import { RACE, SHIPS, LASERS, MISSILES, ITEMS, AI_LEVELS, AI_NAMES, SHIP_LIVERIES } from './config.js';
 import { clamp } from './noise.js';
 
 const L = TRACK.length;
+const CPS = FEATURES.checkpoints; // per-lap checkpoint positions, last one = finish line
 export const dS = (a, b) => { let d = (a - b) % L; if (d > L / 2) d -= L; if (d < -L / 2) d += L; return d; };
 const R = () => Math.random();
 
@@ -18,8 +19,9 @@ function makeRacer(i, opts) {
     dist: -(i % 5) * 14 - Math.floor(i / 1) * 0, x: ((i % 5) - 2) * 18, y: (i % 2) * 8, vx: 0, vy: 0, speed: 0,
     hp: def.hp, maxHp: def.hp, shield: 0, dome: 0, heat: 0, overheat: 0, charge: 0, fireCd: 0,
     ammo: mDef.ammo + (def.extraMissiles || 0), ammoMax: mDef.ammo + (def.extraMissiles || 0), ammoRegen: 0,
-    item: -1, abilityCd: 3, abilityT: 0, fx: { boost: 0, slow: 0, emp: 0, phase: 0, decoy: 0, overload: 0, nova: 0, drones: 0, magnet: 0, dash: 0, repair: 0, ring: 0 },
+    item: -1, abilityCd: 3, abilityT: 0, fx: { boost: 0, slow: 0, emp: 0, phase: 0, decoy: 0, overload: 0, nova: 0, drones: 0, magnet: 0, dash: 0, repair: 0, ring: 0, holo: 0 },
     dead: false, respawnT: 0, protect: 0, finished: false, finishTime: 0, place: i + 1, kills: 0, deaths: 0,
+    cp: 0, taken: new Set(), holoTrail: [], holoT: 0,
     lockTarget: -1, lockT: 0, bank: 0, pitch: 0, scrape: 0, lastMissile: -1, droneT: 0, hitFlash: 0, beamOn: false, beamEnd: null,
     input: { steer: 0, climb: 0, brake: false, fire: false, missile: false, item: false, ability: false },
   };
@@ -37,7 +39,7 @@ export class Race {
     const names = [...AI_NAMES].sort(() => R() - 0.5);
     for (let k = 0; k < aiCount; k++) {
       let ship = (player.ship + 1 + k) % SHIPS.length;
-      grid.push({ name: names[k], ship, laser: Math.floor(R() * LASERS.length), missile: Math.floor(R() * MISSILES.length), livery: LIVERIES[(k * 3 + 1 + player.ship) % LIVERIES.length], finish: ['gloss', 'metal', 'chrome', 'gloss'][k % 4], ai: this.level });
+      grid.push({ name: names[k], ship, laser: Math.floor(R() * LASERS.length), missile: Math.floor(R() * MISSILES.length), livery: SHIP_LIVERIES[ship][(k + 1) % 5], finish: ['gloss', 'metal', 'chrome', 'gloss'][k % 4], ai: this.level });
     }
     // human starts at the back row (classic); grid: 2 columns staggered
     const order = [1, 2, 3, 4, 0];
@@ -91,7 +93,10 @@ export class Race {
     if (r.dead) {
       r.respawnT -= dt; r.speed = 0;
       if (r.respawnT <= 0) {
-        r.dead = false; r.dist = Math.max(0, r.dist - RACE.rollback); r.x = 0; r.y = 0; r.vx = r.vy = 0;
+        // roll back up to 250 m, but never behind the start of the current lap
+        const lapStart = Math.max(0, Math.floor(r.dist / L) * L);
+        r.dead = false; r.dist = Math.max(Math.min(r.dist, lapStart), r.dist - RACE.rollback); r.x = 0; r.y = 0; r.vx = r.vy = 0;
+        r.holoTrail.length = 0;
         const b = bounds(wrapS(r.dist)); r.y = clamp(0, b.yMin + 10, b.yMax - 10);
         r.hp = r.maxHp; r.shield = 0; r.heat = 0; r.protect = RACE.protect; r.speed = r.def.cruise * 0.6;
         this.emit({ type: 'respawn', r: r.id });
@@ -114,7 +119,7 @@ export class Race {
     if (r.finished) target = def.cruise * 0.7;
     const acc = target > r.speed ? def.accel * (F.boost || F.dash ? 3 : 1) : 60;
     r.speed += clamp(target - r.speed, -acc * dt, acc * dt);
-    r.speed = Math.max(r.speed, 30);
+    r.speed = Math.max(r.speed, RACE.minSpeed);
     // lateral / vertical
     const h = def.handling * (F.slow > 0 ? 0.6 : 1), c = def.climb * (F.slow > 0 ? 0.6 : 1);
     let steer = inp.steer, climb = inp.climb;
@@ -153,8 +158,18 @@ export class Race {
     if (r.overheat > 0) r.overheat -= dt;
     if (r.ammo < r.ammoMax) { r.ammoRegen += dt; if (r.ammoRegen > r.missileDef.regen) { r.ammoRegen = 0; r.ammo++; } }
     if (F.repair > 0) r.hp = Math.min(r.maxHp, r.hp + 40 / 3 * dt);
-    // finish
-    if (!r.finished && r.dist >= RACE.laps * L) {
+    // checkpoints, strictly in order (absolute index across all laps)
+    while (r.cp < CPS.length * RACE.laps && r.dist >= this.cpDist(r.cp)) {
+      r.cp++;
+      this.emit({ type: 'checkpoint', r: r.id, n: ((r.cp - 1) % CPS.length) + 1, of: CPS.length });
+    }
+    // holographic trail: remember recent positions while the item is active
+    if (F.holo > 0) {
+      r.holoT -= dt;
+      if (r.holoT <= 0) { r.holoT = 0.16; r.holoTrail.push({ s: wrapS(r.dist - 6), x: r.x, y: r.y }); if (r.holoTrail.length > 4) r.holoTrail.shift(); }
+    } else if (r.holoTrail.length) r.holoTrail.length = 0;
+    // finish: all checkpoints of every lap passed
+    if (!r.finished && r.cp >= CPS.length * RACE.laps && r.dist >= RACE.laps * L) {
       r.finished = true; r.finishTime = this.time; this.finishOrder.push(r.id);
       this.emit({ type: 'finish', r: r.id, place: this.finishOrder.length });
     }
@@ -164,6 +179,8 @@ export class Race {
     if (inp.item && r.item >= 0 && F.emp <= 0) this.useItem(r);
     inp.ability = false; inp.item = false;
   }
+
+  cpDist(i) { return Math.floor(i / CPS.length) * L + CPS[i % CPS.length]; }
 
   obstacles(r, s) {
     for (const sp of this.spires) {
@@ -387,7 +404,7 @@ export class Race {
         if (o.id === b.owner || o.dead) continue;
         const d = dS(wrapS(o.dist), s0);
         if (d > -6 && d < step + 6 && Math.abs(o.x - b.x) < 5.5 && Math.abs(o.y - b.y) < 4) {
-          if (o.fx.decoy > 0 && R() < 0.5) continue;
+          if ((o.fx.decoy > 0 || o.fx.holo > 0) && R() < 0.5) continue;
           this.damage(o, b.dmg, this.racers[b.owner], 'laser');
           this.emit({ type: 'hit', s: wrapS(o.dist), x: b.x, y: b.y, color: b.color, v: o.id });
           hit = true; break;
@@ -438,6 +455,8 @@ export class Race {
       if (t) {
         let tx = t.x, ty = t.y, ts = wrapS(t.dist);
         if (t.fx.decoy > 0) { tx = t.x + 25; ty = t.y + 12; }
+        const ph = t.fx.holo > 0 && t.holoTrail.length ? t.holoTrail[0] : null;
+        if (ph) { tx = ph.x; ty = ph.y; ts = ph.s; m.phantom = ph; } else m.phantom = null;
         const d = dS(ts, m.s);
         const tt = Math.max(0.05, d / Math.max(30, m.speed - t.speed));
         const wantX = (tx - m.x) / tt, wantY = (ty - m.y) / tt;
@@ -447,6 +466,7 @@ export class Race {
       } else { m.vx *= 1 - dt * 0.8; m.vy *= 1 - dt * 0.8; }
       const s0 = m.s; m.s = wrapS(m.s + m.speed * dt); m.x += m.vx * dt; m.y += m.vy * dt;
       let boom = m.life <= 0;
+      if (!boom && m.phantom && Math.hypot(dS(m.phantom.s, m.s), m.phantom.x - m.x, m.phantom.y - m.y) < 9) { this.emit({ type: 'phantom', s: m.s, x: m.x, y: m.y, r: m.target }); boom = true; m.dmg *= 0.25; }
       if (!boom) for (const o of this.racers) {
         if (o.id === m.owner || o.dead) continue;
         const d = dS(wrapS(o.dist), s0);
@@ -470,6 +490,9 @@ export class Race {
         if (r.dead || r.item >= 0 || r.protect > 0) continue;
         const d = dS(wrapS(r.dist), p.s);
         if (d > -8 && d < 8 && Math.abs(r.x - p.x) < 10 && Math.abs(r.y - p.y) < 9) {
+          const key = this.groupKey(r, p);
+          if (r.taken.has(key)) continue; // one pickup per group per lap
+          r.taken.add(key);
           p.active = false; p.t = RACE.pickupRespawn;
           r.item = this.rollItem(r);
           this.emit({ type: 'pickup', r: r.id, item: r.item, s: p.s, x: p.x, y: p.y });
@@ -478,6 +501,9 @@ export class Race {
       }
     }
   }
+  // lap index + group; the lap is taken from the case position so a respawn rollback can't reset it
+  groupKey(r, p) { const lap = Math.floor((r.dist - dS(wrapS(r.dist), p.s)) / L + 1e-6); return lap * 64 + p.group; }
+  canTake(r, p) { return !r.taken.has(this.groupKey(r, p)); }
   rollItem(r) {
     // catch-up weighting: trailing racers get stronger items
     const w = ITEMS.map(it => 1);
@@ -506,6 +532,7 @@ export class Race {
       case 'drones': F.drones = 7; break;
       case 'phase': F.phase = 2.5; break;
       case 'magnet': F.magnet = 4; break;
+      case 'holo': F.holo = 5; r.holoT = 0; r.holoTrail.length = 0; break;
     }
     this.emit({ type: 'item', r: r.id, item: it.key, s, x: r.x, y: r.y });
   }
@@ -537,7 +564,7 @@ export class Race {
       // pickups
       if (r.item < 0) {
         let best = null, bd = 1e9;
-        for (const p of this.pickups) { if (!p.active) continue; const d = dS(p.s, s); if (d > 30 && d < 260 && d < bd) { bd = d; best = p; } }
+        for (const p of this.pickups) { if (!p.active || !this.canTake(r, p)) continue; const d = dS(p.s, s); if (d > 30 && d < 260 && d < bd) { bd = d; best = p; } }
         if (best && R() < 0.4 + A.line * 0.5) { tx = best.x; ty = best.y; }
       }
       // chase target to shoot
@@ -578,6 +605,7 @@ export class Race {
       else if (key === 'chrono' || key === 'emp') use = r.place > 1 && this.racers.some(o => o !== r && dS(wrapS(o.dist), s) > 0 && dS(wrapS(o.dist), s) < 250);
       else if (key === 'shield' || key === 'repair') use = r.hp < r.maxHp * 0.6;
       else if (key === 'phase') use = A.threat;
+      else if (key === 'holo') use = A.threat || this.racers.some(o => o !== r && !o.dead && dS(wrapS(o.dist), s) < 0 && dS(wrapS(o.dist), s) > -220);
       if (use && R() < dt * (1 + A.aggro * 3)) inp.item = true;
     }
     if (r.abilityCd <= 0) {

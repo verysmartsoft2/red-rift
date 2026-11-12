@@ -1,38 +1,41 @@
 // Game rules and content tables. Distances in metres, time in seconds.
 export const RACE = {
   laps: 3, racers: 5, countdown: 3,
-  respawnDelay: 2.6, rollback: 380, protect: 2.0,
+  lapTarget: 18000, // the loop is scaled to ~18 km per lap
+  respawnDelay: 4, rollback: 250, protect: 1.5, // rollback never crosses the lap start
+  checkpointSpacing: 1000, // checkpoints must be passed in order
+  minSpeed: 55, // no reverse, no hovering
   heatMax: 100, overheatLock: 1.6,
   wallDamage: 26, // per second scraping
   crashDamage: 28,
-  pickupRespawn: 6,
+  pickupRespawn: 4, // one pickup per case group per lap for each racer (death does not reset it)
   energyRegen: 9,
 };
 
 export const SHIPS = [
   { key: 'kestrel', name: 'KESTREL', role: 'Скорость', color: '#2f8bff',
     desc: 'Лёгкая дельта с одним мощным двигателем. Самая высокая скорость, но тонкая броня.',
-    cruise: 92, top: 106, accel: 34, handling: 46, climb: 40, hp: 90, cooling: 30, energy: 100,
+    cruise: 105, top: 119, accel: 34, handling: 46, climb: 40, hp: 90, cooling: 30, energy: 100,
     stats: { speed: 5, handling: 3, armor: 1, firepower: 3 },
     ability: { key: 'dash', name: 'СЛИПСТРИМ-РЫВОК', cd: 9, dur: 1.3, desc: 'Рывок ×1.6 на 1.3 с, пробивает выхлоп соперника' } },
   { key: 'mirage', name: 'MIRAGE', role: 'Маневренность', color: '#ff2fb0',
     desc: 'Серповидное крыло с двигателями на законцовках. Лучший манёвр и голограмма-приманка.',
-    cruise: 89, top: 102, accel: 32, handling: 62, climb: 56, hp: 100, cooling: 26, energy: 100,
+    cruise: 102, top: 115, accel: 32, handling: 62, climb: 56, hp: 100, cooling: 26, energy: 100,
     stats: { speed: 4, handling: 5, armor: 2, firepower: 2 },
     ability: { key: 'decoy', name: 'МИРАЖ', cd: 11, dur: 3, desc: 'Голограмма срывает захват ракет, вы становитесь полупрозрачным' } },
   { key: 'bastion', name: 'BASTION', role: 'Броня', color: '#ffd400',
     desc: 'Тяжёлая двухбалочная машина. Держит удар, таранит соперников, ставит энергокупол.',
-    cruise: 86, top: 97, accel: 26, handling: 38, climb: 32, hp: 160, cooling: 28, energy: 100,
+    cruise: 98, top: 110, accel: 26, handling: 38, climb: 32, hp: 160, cooling: 28, energy: 100,
     stats: { speed: 2, handling: 1, armor: 5, firepower: 4 },
     ability: { key: 'shield', name: 'ЭНЕРГОКУПОЛ', cd: 13, dur: 3.5, desc: 'Купол поглощает 70 урона и отражает лазеры' } },
   { key: 'arc', name: 'ARC', role: 'Лазеры', color: '#a05cff',
     desc: 'Раздвоенный нос с излучателем. Мощнейшие лазеры и быстрое охлаждение.',
-    cruise: 88, top: 100, accel: 30, handling: 48, climb: 44, hp: 110, cooling: 42, energy: 100,
+    cruise: 100, top: 113, accel: 30, handling: 48, climb: 44, hp: 110, cooling: 42, energy: 100,
     stats: { speed: 3, handling: 3, armor: 2, firepower: 5 },
     ability: { key: 'overload', name: 'ПЕРЕГРУЗКА', cd: 13, dur: 3.5, desc: 'Урон лазеров ×1.6, нагрев отключён' } },
   { key: 'nomad', name: 'NOMAD', role: 'Универсал', color: '#ff8a1e',
     desc: 'Две гондолы и V-хвост. Сбалансирован, чинится в полёте и носит больше ракет.',
-    cruise: 89, top: 102, accel: 31, handling: 50, climb: 46, hp: 125, cooling: 32, energy: 100, extraMissiles: 2,
+    cruise: 102, top: 115, accel: 31, handling: 50, climb: 46, hp: 125, cooling: 32, energy: 100, extraMissiles: 2,
     stats: { speed: 3, handling: 3, armor: 3, firepower: 3 },
     ability: { key: 'repair', name: 'НАНОРЕМОНТ', cd: 16, dur: 3, desc: 'Восстанавливает 40 брони за 3 с' } },
 ];
@@ -49,6 +52,17 @@ export const LIVERIES = [
   { name: 'КОБАЛЬТ', primary: '#0b3cff', secondary: '#ff7b16', accent: '#f6f7ff', neon: '#43edff' },
   { name: 'ЗОЛОТО', primary: '#ffcc33', secondary: '#1b1b1f', accent: '#ff2a2a', neon: '#ffd84a' },
 ];
+// Five paint schemes per ship: factory colours first, then four picked from the shared set.
+const FACTORY = [
+  { name: 'ЗАВОДСКАЯ', primary: '#2f8bff', secondary: '#e8eef8', accent: '#ff3050', neon: '#29f3ff' },
+  { name: 'ЗАВОДСКАЯ', primary: '#ff2fb0', secondary: '#1a1024', accent: '#29f3ff', neon: '#ff4fd8' },
+  { name: 'ЗАВОДСКАЯ', primary: '#ffd400', secondary: '#2a2a30', accent: '#ff5a00', neon: '#ffb020' },
+  { name: 'ЗАВОДСКАЯ', primary: '#a05cff', secondary: '#101018', accent: '#b6ff00', neon: '#b56bff' },
+  { name: 'ЗАВОДСКАЯ', primary: '#ff8a1e', secondary: '#f2efe6', accent: '#19beb6', neon: '#4de9d2' },
+];
+const PICKS = [[8, 3, 0, 5], [0, 4, 7, 1], [9, 2, 5, 6], [4, 1, 6, 3], [2, 6, 8, 7]];
+export const SHIP_LIVERIES = FACTORY.map((f, i) => [f, ...PICKS[i].map(k => LIVERIES[k])]);
+
 export const FINISHES = [
   { key: 'gloss', name: 'Глянец', metalness: 0.35, roughness: 0.22, clearcoat: 1 },
   { key: 'metal', name: 'Металлик', metalness: 0.75, roughness: 0.3, clearcoat: 0.6 },
@@ -83,6 +97,7 @@ export const ITEMS = [
   { key: 'emp', name: 'ЭМИ', color: '#ffe600', icon: 'ϟ', desc: 'Глушит оружие соперников рядом на 3.5 с' },
   { key: 'drones', name: 'РОЙ ДРОНОВ', color: '#ff8a1e', icon: '⁂', desc: '3 дрона-охотника атакуют 7 с' },
   { key: 'phase', name: 'ФАЗА', color: '#ffffff', icon: '◌', desc: 'Неуязвимость и полёт сквозь препятствия 2.5 с' },
+  { key: 'holo', name: 'ГОЛО-СЛЕД', color: '#7dfcff', icon: '≋', desc: 'Голографический след 5 с: ракеты бьют в фантомов, лазеры мажут' },
   { key: 'magnet', name: 'ГРАВИТРОС', color: '#ff2fd0', icon: '⟿', desc: 'Притягивает к лидеру и даёт тягу 4 с' },
 ];
 

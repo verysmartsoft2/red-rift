@@ -5,12 +5,12 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { TRACK, FEATURES, toWorld, frameAt, newFrame, wrapS, sectorName, typeAt } from './track.js';
+import { TRACK, FEATURES, toWorld, frameAt, newFrame, wrapS, sectorName, typeAt, bounds } from './track.js';
 import { buildWorld } from './world.js';
-import { buildShip, updateShipFx } from './ships.js';
+import { buildShip, updateShipFx, loadShipModels } from './ships.js';
 import { FX, buildCase, buildBoostRing } from './fx.js';
 import { Race, dS } from './sim.js';
-import { SHIPS, LIVERIES, FINISHES, PALETTE, LASERS, MISSILES, ITEMS, AI_LEVELS, RACE } from './config.js';
+import { SHIPS, SHIP_LIVERIES, FINISHES, PALETTE, LASERS, MISSILES, ITEMS, AI_LEVELS, RACE } from './config.js';
 import { Audio } from './audio.js';
 import { softTex } from './shaders.js';
 
@@ -29,9 +29,11 @@ const camera = new THREE.PerspectiveCamera(74, 1, 0.5, 40000);
 const audio = new Audio();
 
 // ---------------- settings ----------------
-const DEF = { ship: 0, liveryIdx: 8, livery: { ...LIVERIES[8] }, finish: 'gloss', laser: 0, missile: 0, diff: 1, name: 'ПИЛОТ', gfx: 1 };
+const DEF = { ship: 0, liveryIdx: 0, livery: { ...SHIP_LIVERIES[0][0] }, finish: 'gloss', laser: 0, missile: 0, diff: 1, name: 'ПИЛОТ', gfx: 1 };
 let S = { ...DEF };
 try { const raw = localStorage.getItem('redrift.settings'); if (raw) S = { ...DEF, ...JSON.parse(raw) }; } catch (e) { /* storage blocked */ }
+if (!(S.ship >= 0 && S.ship < SHIPS.length)) S.ship = 0;
+if (S.liveryIdx > 4 || !S.livery) { S.liveryIdx = 0; S.livery = { ...SHIP_LIVERIES[S.ship][0] }; }
 const save = () => { try { localStorage.setItem('redrift.settings', JSON.stringify(S)); } catch (e) { /* ignore */ } };
 const GFX = [{ name: 'НИЗКАЯ', pr: 0.75, shadows: false, bloom: 0.6 }, { name: 'СРЕДНЯЯ', pr: 1.25, shadows: true, bloom: 0.8 }, { name: 'ВЫСОКАЯ', pr: 2, shadows: true, bloom: 0.85 }];
 
@@ -86,6 +88,8 @@ async function boot() {
   const step = (p, t) => { bar.style.width = (p * 100) + '%'; if (t) txt.textContent = t; return new Promise(r => setTimeout(r, 30)); };
   await step(0.1, 'Генерация каньонов и тоннеля…');
   W = buildWorld(scene, renderer, () => {});
+  await step(0.55, 'Загрузка самолётов…');
+  await loadShipModels(SHIPS.map(s => s.key), (k) => step(0.55 + k * 0.15));
   await step(0.7, 'Сборка флота и эффектов…');
   fx = new FX(scene, W.heightAt);
   // warm-up compile
@@ -130,7 +134,7 @@ function refreshDisplayShip() {
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 function buildMenu() {
   const sl = $('shipList'); sl.innerHTML = '';
-  SHIPS.forEach((sh, i) => { const b = el('button', i === S.ship ? 'on' : '', sh.name); b.onclick = () => { S.ship = i; audio.play('ui'); save(); buildMenu(); refreshDisplayShip(); }; sl.appendChild(b); });
+  SHIPS.forEach((sh, i) => { const b = el('button', i === S.ship ? 'on' : '', sh.name); b.onclick = () => { S.ship = i; if (S.liveryIdx >= 0) S.livery = { ...SHIP_LIVERIES[i][S.liveryIdx] }; audio.play('ui'); save(); buildMenu(); refreshDisplayShip(); }; sl.appendChild(b); });
   const sh = SHIPS[S.ship];
   $('shipName').textContent = sh.name; $('shipRole').textContent = sh.role; $('shipDesc').textContent = sh.desc;
   const st = $('shipStats'); st.innerHTML = '';
@@ -141,7 +145,7 @@ function buildMenu() {
   $('abName').textContent = sh.ability.name; $('abDesc').textContent = sh.ability.desc;
   // liveries
   const ll = $('liveryList'); ll.innerHTML = '';
-  LIVERIES.forEach((lv, i) => {
+  SHIP_LIVERIES[S.ship].forEach((lv, i) => {
     const b = el('button', i === S.liveryIdx ? 'on' : '');
     const strip = el('div', 'strip'); for (const k of ['primary', 'secondary', 'accent', 'neon']) { const c = el('i'); c.style.background = lv[k]; strip.appendChild(c); }
     b.appendChild(strip); b.appendChild(el('span', '', lv.name));
@@ -178,7 +182,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
 });
 function showMenu() {
   mode = 'menu'; clearRace();
-  ['hud', 'pause', 'results'].forEach(id => $(id).classList.add('hidden'));
+  ['hud', 'pause', 'results'].forEach(id => $(id).classList.add('hidden')); showTouch(false);
   $('menu').classList.remove('hidden');
   buildMenu(); refreshDisplayShip(); pad.visible = true;
 }
@@ -190,7 +194,7 @@ $('againBtn').onclick = () => startRace();
 $('hangarBtn').onclick = () => showMenu();
 
 // ---------------- race ----------------
-let race = null, raceGroup = null, shipMeshes = [], caseMeshes = [], ghosts = [], droneSprites = [];
+let race = null, raceGroup = null, shipMeshes = [], caseMeshes = [], ghosts = [], droneSprites = [], holoMeshes = [];
 let paused = false, acc = 0, timeScale = 1, slowT = 0, slowScale = 1;
 let camMode = 0, missileCam = false, mcamHold = 0, mcamLast = new THREE.Vector3(), deathPos = null;
 let lapStart = 0, lastLap = 1, bestLap = Infinity, lastSector = '', sectorT = 0, finishT = -1;
@@ -199,7 +203,7 @@ const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 
 function clearRace() {
   if (raceGroup) { scene.remove(raceGroup); raceGroup = null; }
-  race = null; shipMeshes = []; caseMeshes = []; ghosts = []; droneSprites = [];
+  race = null; shipMeshes = []; caseMeshes = []; ghosts = []; droneSprites = []; holoMeshes = [];
   for (const sp of FEATURES.spires) { if (sp.mesh) sp.mesh.visible = true; sp.alive = true; }
   if (fx) { fx.syncBolts([], toWorld); fx.syncMissiles([], toWorld, 0); fx.endBeamFrame(); }
 }
@@ -223,14 +227,35 @@ function startRace() {
     m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(f.r, f.u, f.t.clone().negate()));
     raceGroup.add(m);
   }
+  for (const cs of FEATURES.checkpoints.slice(0, -1)) raceGroup.add(buildGate(cs, f));
   paused = false; acc = 0; timeScale = 1; slowT = 0; camMode = 0; missileCam = false; deathPos = null;
   lapStart = 0; lastLap = 1; bestLap = Infinity; lastSector = ''; finishT = -1; hurt = 0;
   mode = 'race';
-  $('menu').classList.add('hidden'); $('results').classList.add('hidden'); $('hud').classList.remove('hidden');
+  $('menu').classList.add('hidden'); $('results').classList.add('hidden'); $('hud').classList.remove('hidden'); showTouch(true);
+  $('hCpN').textContent = FEATURES.checkpoints.length;
   $('hMslName').textContent = MISSILES[S.missile].name; $('hAbName').textContent = SHIPS[S.ship].ability.name;
   $('hFeed').innerHTML = '';
   const p = race.player; placeCamera(p, 1, true);
   center('3', true);
+}
+
+// checkpoint gate: two neon posts on the corridor edges (a thin ring inside the tunnel)
+const gateMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x29f3ff).multiplyScalar(3), transparent: true, opacity: 0.85, depthWrite: false });
+function buildGate(cs, f) {
+  const g = new THREE.Group(); const b = bounds(cs); frameAt(cs, f);
+  const basis = new THREE.Matrix4().makeBasis(f.r, f.u, f.t.clone().negate());
+  if (b.tunnel) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(b.hw - 2, 0.35, 6, 64), gateMat);
+    ring.position.copy(toWorld(cs, 0, 0)); ring.quaternion.setFromRotationMatrix(basis); g.add(ring);
+    return g;
+  }
+  const h = Math.min(60, b.yMax - b.yMin);
+  for (const side of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(1.2, h, 1.2), gateMat);
+    post.position.copy(toWorld(cs, side * (b.hw - 3), b.yMin + h / 2)); post.quaternion.setFromRotationMatrix(basis);
+    g.add(post);
+  }
+  return g;
 }
 
 function togglePause(v = !paused) {
@@ -244,6 +269,7 @@ const edge = { missile: false, item: false, ability: false };
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   keys.add(e.code);
+  if (mode === 'race' && e.ctrlKey) e.preventDefault(); // Ctrl is the air brake: keep Ctrl+F/D/S etc. inside the game
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
   audio.init();
@@ -269,7 +295,7 @@ function readInput() {
   const k = (c) => keys.has(c);
   let steer = (k('KeyD') || k('ArrowRight') ? 1 : 0) - (k('KeyA') || k('ArrowLeft') ? 1 : 0);
   let climb = (k('KeyW') || k('ArrowUp') ? 1 : 0) - (k('KeyS') || k('ArrowDown') ? 1 : 0);
-  let fire = k('Space') || mouse0, brake = k('ShiftLeft') || k('ShiftRight') || k('ControlLeft');
+  let fire = k('Space') || mouse0, brake = k('ControlLeft') || k('ControlRight') || k('ShiftLeft') || k('ShiftRight');
   const gp = navigator.getGamepads ? [...navigator.getGamepads()].find(g => g) : null;
   if (gp) {
     const dz = v => Math.abs(v) < 0.15 ? 0 : v;
@@ -279,6 +305,7 @@ function readInput() {
     const ed = (i, fn) => { if (b(i) && !padPrev[i]) fn(); padPrev[i] = b(i); };
     ed(0, () => edge.missile = true); ed(2, () => edge.item = true); ed(3, () => edge.ability = true); ed(1, toggleMissileCam); ed(9, () => togglePause());
   }
+  steer += touch.steer; climb += touch.climb; fire = fire || touch.fire; brake = brake || touch.brake;
   const inp = race.player.input;
   inp.steer = Math.max(-1, Math.min(1, steer)); inp.climb = Math.max(-1, Math.min(1, climb));
   inp.fire = fire; inp.brake = brake;
@@ -286,6 +313,41 @@ function readInput() {
   if (edge.item) { inp.item = true; edge.item = false; }
   if (edge.ability) { inp.ability = true; edge.ability = false; }
 }
+
+// ---------------- touch controls ----------------
+const touch = { steer: 0, climb: 0, fire: false, brake: false };
+const isTouch = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || navigator.maxTouchPoints > 0;
+if (isTouch) document.body.classList.add('touch');
+function showTouch(v) { $('touch').classList.toggle('hidden', !(v && isTouch)); }
+(function setupTouch() {
+  const stick = $('stick'), knob = $('stickKnob');
+  let sid = null;
+  const moveStick = (e) => {
+    const r = stick.getBoundingClientRect(), R = r.width / 2;
+    let dx = e.clientX - (r.left + R), dy = e.clientY - (r.top + R);
+    const l = Math.hypot(dx, dy); if (l > R) { dx *= R / l; dy *= R / l; }
+    touch.steer = dx / R; touch.climb = -dy / R;
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+  const endStick = () => { sid = null; touch.steer = touch.climb = 0; knob.style.transform = ''; };
+  stick.addEventListener('pointerdown', e => { sid = e.pointerId; stick.setPointerCapture(sid); audio.init(); moveStick(e); e.preventDefault(); });
+  stick.addEventListener('pointermove', e => { if (e.pointerId === sid) moveStick(e); });
+  stick.addEventListener('pointerup', endStick); stick.addEventListener('pointercancel', endStick);
+  document.querySelectorAll('#touch [data-k]').forEach(b => {
+    const k = b.dataset.k;
+    const down = (e) => {
+      e.preventDefault(); audio.init(); b.classList.add('on');
+      if (k === 'fire' || k === 'brake') touch[k] = true;
+      else if (k === 'mcam') toggleMissileCam();
+      else edge[k] = true;
+    };
+    const up = () => { b.classList.remove('on'); if (k === 'fire' || k === 'brake') touch[k] = false; };
+    b.addEventListener('pointerdown', down); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
+  });
+  $('tPause').addEventListener('click', () => togglePause());
+})();
+// leaving mid-race (e.g. Ctrl+W while braking) asks for confirmation
+window.addEventListener('beforeunload', e => { if (mode === 'race') { e.preventDefault(); e.returnValue = ''; } });
 
 function toggleMissileCam() {
   if (!race) return;
@@ -347,7 +409,9 @@ function processEvents() {
         else if (d < 120) slowmo(0.4, 0.6);
         break;
       }
-      case 'respawn': if (e.r === P.id) { center(''); deathPos = null; sub('ВОЗВРАТ НА ТРАССУ · −380 м'); } break;
+      case 'respawn': if (e.r === P.id) { center(''); deathPos = null; sub(`ВОЗВРАТ НА ТРАССУ · −${RACE.rollback} м`); } break;
+      case 'checkpoint': if (e.r === P.id && e.n < e.of) { sub(`КОНТРОЛЬНАЯ ТОЧКА ${e.n}/${e.of}`, 1.0); audio.play('ui'); } break;
+      case 'phantom': { const p = toWorld(e.s, e.x, e.y, tv).clone(); fx.flash(p, '#7dfcff', 14, 0.3); fx.sparks(p, tv2.set(0, 1, 0), 30, 0x7dfcff, 60); if (e.r === P.id) sub('ФАНТОМ ПРИНЯЛ РАКЕТУ'); break; }
       case 'shatter': { const sp = race.spires[e.sp]; fx.shatterRock(sp); const d = camDist(sp.mesh.position); audio.play('bigexplode', d * 0.6); if (d < 260) slowmo(0.3, 0.9); break; }
       case 'pickup': {
         const p = toWorld(e.s, e.x, e.y, tv).clone(); const it = ITEMS[e.item];
@@ -360,7 +424,7 @@ function processEvents() {
         if (e.item === 'chrono') { audio.play('chrono', camDist(p)); fx.explosion(p.clone(), 0.01, { ring: true, debris: 0, color: 0xa05cff }); for (let i = 0; i < 80; i++) fx.add.emit(p, tv2.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(160), new THREE.Color(0xa05cff), 3, 1.2, { drag: 2 }); if (r === P) slowmo(0.5, 0.6); else if (race.player.fx.slow > 0) sub('ВАС ЗАМЕДЛИЛИ!'); }
         if (e.item === 'emp') { audio.play('emp', camDist(p)); for (let i = 0; i < 120; i++) fx.add.emit(p, tv2.set(Math.random() - 0.5, (Math.random() - 0.5) * 0.3, Math.random() - 0.5).normalize().multiplyScalar(220), new THREE.Color(0x60b0ff), 2, 0.8, { drag: 1 }); if (r !== P && P.fx.emp > 0) { sub('ЭМИ! ОРУЖИЕ ЗАГЛУШЕНО'); empFx = 1; } }
         if (e.item === 'nova') audio.play('nova', camDist(p));
-        if (e.item === 'boost' || e.item === 'magnet') audio.play('item', camDist(p));
+        if (e.item === 'boost' || e.item === 'magnet' || e.item === 'holo') audio.play('item', camDist(p));
         if (r === P) audio.play('item');
         if (r !== P && ['nova', 'chrono', 'emp'].includes(e.item)) feed(`${nameOf(r)} → ${ITEMS.find(i => i.key === e.item).name}`);
         break;
@@ -409,6 +473,17 @@ function updateRaceVisuals(dt, rdt) {
       if (!ghosts[i]) { const g = buildShip(r.def.key, r.livery, 'gloss', i + 1); g.traverse(o => { if (o.isMesh && o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.35; o.material.depthWrite = false; } }); raceGroup.add(g); ghosts[i] = g; }
       const g = ghosts[i]; g.visible = true; g.position.copy(toWorld(s, r.x + 25, r.y + 12, tv2)); g.quaternion.copy(m.quaternion);
     } else if (ghosts[i]) ghosts[i].visible = false;
+    // holographic trail
+    if (r.holoTrail.length) {
+      if (!holoMeshes[i]) {
+        holoMeshes[i] = [];
+        for (let k = 0; k < 4; k++) { const g = buildShip(r.def.key, r.livery, 'gloss', i + 1); g.traverse(o => { if (o.isMesh) o.material = holoMat; }); g.visible = false; raceGroup.add(g); holoMeshes[i].push(g); }
+      }
+      holoMeshes[i].forEach((g, k) => {
+        const h = r.holoTrail[k]; g.visible = !!h && Math.random() > 0.08;
+        if (h) { g.position.copy(toWorld(h.s, h.x, h.y, tv2)); g.quaternion.copy(m.quaternion); }
+      });
+    } else if (holoMeshes[i]) holoMeshes[i].forEach(g => g.visible = false);
     // drones
     droneSprites[i].forEach((d, k) => { d.visible = r.fx.drones > 0; if (d.visible) { const a = gtime * 3 + k * 2.1; d.position.copy(toWorld(s, r.x + Math.cos(a) * 9, r.y + Math.sin(a) * 6 + 4, tv2)); } });
     // beams
@@ -432,10 +507,11 @@ function updateRaceVisuals(dt, rdt) {
   race.pickups.forEach((p, i) => {
     const c = caseMeshes[i]; c.visible = p.active;
     if (!p.active) return;
+    const ok = race.canTake(P, p); c.scale.setScalar(ok ? 1 : 0.5);
     c.position.copy(toWorld(p.s, p.x, p.y + Math.sin(gtime * 2 + i) * 1.2, tv));
     c.rotation.y += rdt * 1.5; c.userData.core.rotation.x += rdt;
     const hue = (gtime * 0.15 + i * 0.07) % 1;
-    c.userData.frame.material.color.setHSL(hue, 1, 0.5).multiplyScalar(3);
+    c.userData.frame.material.color.setHSL(hue, ok ? 1 : 0, ok ? 0.5 : 0.25).multiplyScalar(ok ? 3 : 1);
     c.userData.ring.material.color.setHSL((hue + 0.5) % 1, 1, 0.5).multiplyScalar(2.5);
     c.userData.halo.material.color.setHSL(hue, 1, 0.6);
   });
@@ -445,6 +521,7 @@ function updateRaceVisuals(dt, rdt) {
   fx.update(dt);
 }
 let r0beamSound = false;
+const holoMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x7dfcff).multiplyScalar(1.6), transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
 
 function placeCamera(P, dt, snap = false) {
   const s = wrapS(P.dist);
@@ -546,6 +623,7 @@ function updateHUD(rdt) {
   $('hTime').textContent = fmt(t);
   if (P.lap !== lastLap && P.lap > lastLap) { const lt = t - lapStart; bestLap = Math.min(bestLap, lt); lapStart = t; lastLap = P.lap; center(P.lap === RACE.laps ? 'ПОСЛЕДНИЙ КРУГ' : `КРУГ ${P.lap}`, true); setTimeout(() => { if (race && !P.finished) center(''); }, 1400); sub('Круг: ' + fmt(lt)); }
   $('hLap').textContent = Math.min(P.lap || 1, RACE.laps);
+  const nCp = FEATURES.checkpoints.length; $('hCp').textContent = P.finished ? nCp : Math.max(0, P.cp - (Math.min(P.lap, RACE.laps) - 1) * nCp);
   $('hBest').textContent = 'лучший круг ' + fmt(bestLap) + ' · круг ' + fmt(t - lapStart);
   $('hPos').textContent = P.place;
   // sector banner
@@ -600,7 +678,7 @@ function updateHUD(rdt) {
 
 function showResults() {
   mode = 'results';
-  $('hud').classList.add('hidden'); $('results').classList.remove('hidden');
+  $('hud').classList.add('hidden'); $('results').classList.remove('hidden'); showTouch(false);
   const P = race.player;
   const total = RACE.laps * TRACK.length;
   const rows = race.racers.map(r => ({ r, t: r.finished ? r.finishTime : race.time + (total - r.dist) / (r.def.cruise * 0.95) }));
