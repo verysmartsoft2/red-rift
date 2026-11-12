@@ -156,11 +156,13 @@ export class Race {
     if (r.ai) target *= 1 + clamp((this.player.dist - r.dist) / 600, -1, 1) * r.ai.rubber; // bots stay near the human
     // catch-up for every pilot, humans included: the further behind the leader, the faster (nobody flies away for good);
     // the leader with a big margin is slowed a little
-    let lead = -1e9, second = -1e9;
-    for (const o of this.racers) { if (o === r || o.finished) continue; if (o.dist > lead) { second = lead; lead = o.dist; } else if (o.dist > second) second = o.dist; }
+    let lead = -1e9, leader = null;
+    for (const o of this.racers) { if (o === r || o.finished) continue; if (o.dist > lead) { lead = o.dist; leader = o; } }
     r.catchup = 0;
-    if (!r.finished && lead > r.dist) r.catchup = clamp((lead - r.dist - 60) / RACE.catchupFull, 0, 1) * RACE.catchup;
-    else if (!r.finished && lead > -1e8) r.catchup = -clamp((r.dist - lead - 150) / 2000, 0, 1) * 0.04;
+    if (!r.finished && lead > r.dist) {
+      r.catchup = clamp((lead - r.dist - RACE.catchupDead) / RACE.catchupFull, 0, 1) * RACE.catchup;
+      if (r.ai && leader && leader.human) r.catchup *= 0.5; // a human who leads by skill keeps a cushion
+    } else if (!r.finished && leader && !r.human) r.catchup = -clamp((r.dist - lead - 150) / 2000, 0, 1) * 0.04; // only a bot leader is held back
     target *= 1 + r.catchup;
     if (inp.brake) target *= 0.62;
     // slipstream: tucked in 10-70 m behind a rival gives +12 % (KESTREL's dash also cuts through it)
@@ -172,7 +174,7 @@ export class Race {
     }
     if (r.draft) target *= 1.12;
     if (F.boost > 0) target = Math.max(target, def.top * 1.5);
-    if (F.dash > 0) target = Math.max(target, def.top * 1.6);
+    if (F.dash > 0) target = Math.max(target, def.top * 1.3);
     if (F.ring > 0) target = Math.max(target, def.top * 1.3);
     if (F.magnet > 0 && r.place > 1) target *= 1.22;
     if (F.slow > 0) target *= 0.55;
