@@ -58,6 +58,11 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px s
 .custom { display: grid; grid-template-columns: 70px 1fr 70px 1fr; gap: 8px; align-items: center; font-size: 12px; color: var(--dim); }
 .sw { height: 28px; border: 1px solid rgba(255,255,255,0.3); cursor: pointer; }
 .pop[hidden] { display: none; }
+.mprow { display: flex; gap: 8px; margin-top: 10px; }
+.mprow input { flex: 1; min-width: 0; background: rgba(0,0,0,0.3); color: var(--ink); border: 1px solid rgba(255,255,255,0.2); padding: 10px; font-family: var(--mono); font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; }
+#mpStatus { margin-top: 10px; min-height: 1.4em; color: var(--cyan); }
+.mpplayers { margin: 8px 0 0; padding-left: 22px; font-family: var(--mono); font-size: 13px; line-height: 1.8; }
+.mpplayers li span { color: var(--dim); }
 .pop { position: fixed; z-index: 40; display: grid; grid-template-columns: repeat(7, 28px); gap: 4px; padding: 8px; background: #140a22; border: 1px solid rgba(255,255,255,0.2); }
 .pop i { height: 28px; cursor: pointer; border: 1px solid rgba(255,255,255,0.2); }
 .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

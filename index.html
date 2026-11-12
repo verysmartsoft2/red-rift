@@ -13,7 +13,8 @@
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+  "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.4/+esm"
 } }
 </script>
 </head>
@@ -35,6 +36,7 @@
       <button data-tab="paint">Ливрея</button>
       <button data-tab="arms">Оружие</button>
       <button data-tab="race">Гонка</button>
+      <button data-tab="online">Онлайн</button>
       <button data-tab="help">Управление</button>
     </nav>
   </header>
@@ -76,6 +78,15 @@
       <h3>Графика</h3>
       <div id="gfxList" class="chips"></div>
       <p class="small">3 круга по 18 км · около 9 минут · вы и 4 соперника. Контрольные точки — каждый километр, по порядку. После гибели — возврат через 4 с с откатом до 250 м в пределах круга. Один предмет в слоте; из каждой группы кейсов — один подбор за круг.</p>
+    </section>
+    <section data-pane="online" hidden>
+      <h3>Гонка с друзьями · до 3 пилотов</h3>
+      <p class="small">Один пилот создаёт комнату и отправляет ссылку, остальные входят по ней. Свободные места займут боты. Отдельный сервер не нужен — браузеры соединяются напрямую (нужен интернет).</p>
+      <div class="chips"><button id="mpHost">Создать комнату</button><button id="mpLeave" hidden>Выйти из комнаты</button></div>
+      <div class="mprow"><input id="mpCode" maxlength="5" placeholder="КОД КОМНАТЫ" autocomplete="off"><button id="mpJoin">Войти</button></div>
+      <div id="mpLink" class="mprow" hidden><input id="mpUrl" readonly><button id="mpCopy">Копировать ссылку</button></div>
+      <div id="mpStatus" class="small"></div>
+      <ol id="mpPlayers" class="mpplayers"></ol>
     </section>
     <section data-pane="help" hidden>
       <table class="keys">

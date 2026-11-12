@@ -11,6 +11,7 @@ import { buildShip, updateShipFx, loadShipModels, buildWreck } from './ships.js'
 import { FX, buildCase, setCase, buildBoostRing } from './fx.js';
 import { iconURL } from './icons.js';
 import { Race, dS } from './sim.js';
+import { Net, snapshot, applySnapshot, extrapolate } from './net.js';
 import { SHIPS, SHIP_LIVERIES, FINISHES, PALETTE, LASERS, MISSILES, ITEMS, AI_LEVELS, RACE } from './config.js';
 import { Audio } from './audio.js';
 import { softTex } from './shaders.js';
@@ -112,6 +113,8 @@ async function boot() {
   $('loading').classList.add('hidden');
   showMenu();
   requestAnimationFrame(loop);
+  const room = new URLSearchParams(location.search).get('room');
+  if (room) { document.querySelector('#tabs [data-tab=online]').click(); $('mpCode').value = room.toUpperCase(); $('mpJoin').click(); }
 }
 
 // ---------------- hangar ----------------
@@ -191,6 +194,8 @@ function buildMenu() {
   const gl = $('gfxList'); gl.innerHTML = '';
   GFX.forEach((g, i) => { const b = el('button', i === S.gfx ? 'on' : '', g.name); b.onclick = () => { S.gfx = i; save(); applyGfx(); buildMenu(); }; gl.appendChild(b); });
   $('pilotName').value = S.name;
+  $('startBtn').textContent = net.role === 'client' ? 'ЖДЁМ ХОЗЯИНА' : net.role === 'host' && mp.guests.size ? 'НА СТАРТ · ОНЛАЙН' : 'НА СТАРТ';
+  if (net.role === 'client') net.send({ t: 'hello', p: profile() }); // keep the host's copy of our ship and paint current
 }
 $('pilotName').addEventListener('input', e => { S.name = (e.target.value || 'ПИЛОТ').toUpperCase().slice(0, 12); save(); });
 document.addEventListener('click', () => { $('swatchPop').hidden = true; });
@@ -205,12 +210,12 @@ function showMenu() {
   $('menu').classList.remove('hidden'); canvas.style.cursor = 'grab';
   buildMenu(); refreshDisplayShip(); pad.visible = true;
 }
-$('startBtn').onclick = () => { audio.init(); startRace(); };
+$('startBtn').onclick = () => { audio.init(); if (net.role === 'client') { mpStatus('Гонку запускает хозяин комнаты'); return; } startRace(); };
 $('resumeBtn').onclick = () => togglePause(false);
-$('restartBtn').onclick = () => { togglePause(false); startRace(); };
-$('quitBtn').onclick = () => { togglePause(false); showMenu(); };
-$('againBtn').onclick = () => startRace();
-$('hangarBtn').onclick = () => showMenu();
+$('restartBtn').onclick = () => { togglePause(false); if (net.role === 'client') return; startRace(); };
+$('quitBtn').onclick = () => { togglePause(false); if (net.role === 'host') net.send({ t: 'end' }); showMenu(); };
+$('againBtn').onclick = () => { if (net.role === 'client') { sub('Ждём хозяина комнаты'); return; } startRace(); };
+$('hangarBtn').onclick = () => { if (net.role === 'host') net.send({ t: 'end' }); showMenu(); };
 
 // ---------------- race ----------------
 let race = null, raceGroup = null, shipMeshes = [], caseMeshes = [], ghosts = [], droneSprites = [], holoMeshes = [], wrecks = [];
@@ -227,11 +232,11 @@ function clearRace() {
   if (fx) { fx.syncBolts([], toWorld); fx.syncMissiles([], toWorld, 0); fx.endBeamFrame(); }
 }
 
-function startRace() {
+function startRace(setup = null) {
   clearRace();
   if (displayShip) { scene.remove(displayShip); displayShip = null; }
   pad.visible = false;
-  race = new Race({ player: { name: S.name, ship: S.ship, laser: S.laser, missile: S.missile, livery: S.livery, finish: S.finish }, difficulty: S.diff });
+  race = makeRace(setup);
   raceGroup = new THREE.Group(); scene.add(raceGroup);
   race.racers.forEach((r, i) => {
     const m = buildShip(r.def.key, r.livery, r.finish, i + 1); raceGroup.add(m); shipMeshes[i] = m;
@@ -276,6 +281,105 @@ function buildGate(cs, f) {
   }
   return g;
 }
+
+// ---------------- multiplayer (2-3 pilots, host runs the race) ----------------
+const net = new Net();
+const mp = { guests: new Map(), seats: new Map(), me: 0, outbox: [], lastSnap: 0, lastSend: 0, pending: null, cnt: { m: 0, e: 0, q: 0 }, lobby: [] };
+const profile = () => ({ name: S.name, ship: S.ship, laser: S.laser, missile: S.missile, livery: S.livery, finish: S.finish });
+function mpStatus(t) { $('mpStatus').textContent = t; }
+function makeRace(setup) {
+  if (setup) { mp.me = setup.me; return new Race({ player: profile(), difficulty: setup.diff, grid: setup.grid, me: setup.me }); }
+  if (net.role === 'host' && mp.guests.size) {
+    const list = [...mp.guests.entries()];
+    const rc = new Race({ player: profile(), difficulty: S.diff, guests: list.map(([, p]) => p) });
+    mp.seats = new Map(list.map(([peer], i) => [peer, i + 1])); mp.outbox = [];
+    for (const [peer, idx] of mp.seats) net.send({ t: 'start', grid: rc.grid, diff: S.diff, me: idx }, peer);
+    return rc;
+  }
+  mp.seats = new Map();
+  return new Race({ player: profile(), difficulty: S.diff });
+}
+function renderLobby(list) {
+  mp.lobby = list; const ol = $('mpPlayers'); ol.innerHTML = '';
+  list.forEach((p, i) => { ol.appendChild(el('li', '', p.name + ' <span>· ' + (SHIPS[p.ship] ? SHIPS[p.ship].name : '?') + (i === 0 ? ' · хозяин' : '') + '</span>')); });
+  $('mpLeave').hidden = !net.role; $('mpHost').hidden = !!net.role;
+  buildMenu();
+}
+function hostLobby() { const list = [profile(), ...mp.guests.values()]; renderLobby(list); net.send({ t: 'lobby', list }); }
+function hostSend(force) {
+  const now = performance.now();
+  if (!force && now - mp.lastSnap < 50) return;
+  mp.lastSnap = now; net.send(snapshot(race, mp.outbox)); mp.outbox = [];
+}
+function clientStep(dt) {
+  const P = race.player, inp = P.input;
+  if (inp.missile) mp.cnt.m++; if (inp.item) mp.cnt.e++; if (inp.ability) mp.cnt.q++;
+  inp.missile = inp.item = inp.ability = false; // the host fires missiles and uses items
+  if (race.started && !P.finished) race.move(P, dt); else if (!race.started) P.speed = 0;
+  race.events.length = 0; // local flight events are cosmetic duplicates; the host sends the real ones
+}
+function clientSync(rdt) {
+  const now = performance.now();
+  if (mp.pending) { applySnapshot(race, mp.pending, mp.me, now); mp.pending = null; }
+  extrapolate(race, mp.me, rdt, now, wrapS);
+  if (now - mp.lastSend > 33) {
+    mp.lastSend = now; const P = race.player, i = P.input;
+    net.send({ t: 'i', steer: i.steer, climb: i.climb, fire: i.fire, brake: i.brake, m: mp.cnt.m, e: mp.cnt.e, q: mp.cnt.q, sp: P.spawnId, n: { dist: P.dist, x: P.x, y: P.y, vx: P.vx, vy: P.vy, speed: P.speed, bank: P.bank } });
+  }
+}
+net.on('join', () => mpStatus('Пилот подключается…'));
+net.on('msg', (d, from) => {
+  if (net.role === 'host') {
+    if (d.t === 'hello') { mp.guests.set(from, d.p); hostLobby(); mpStatus('В комнате пилотов: ' + (mp.guests.size + 1) + ' из 3'); }
+    else if (d.t === 'i' && race) {
+      const r = race.racers[mp.seats.get(from)]; if (!r || !r.remote) return;
+      r.input.steer = d.steer; r.input.climb = d.climb; r.input.fire = d.fire; r.input.brake = d.brake;
+      if (d.m > (r._m || 0)) r.input.missile = true; if (d.e > (r._e || 0)) r.input.item = true; if (d.q > (r._q || 0)) r.input.ability = true;
+      r._m = d.m; r._e = d.e; r._q = d.q;
+      if (d.sp === r.spawnId && !r.dead) r.net = d.n;
+    }
+  } else {
+    if (d.t === 'lobby') { renderLobby(d.list); mpStatus('В комнате ' + net.code + '. Ждём старта от хозяина…'); }
+    else if (d.t === 'start') { mp.cnt = { m: 0, e: 0, q: 0 }; mp.pending = null; startRace(d); }
+    else if (d.t === 's' && mode === 'race') { if (mp.pending) d.E = mp.pending.E.concat(d.E); mp.pending = d; }
+    else if (d.t === 'end' && mode !== 'menu') { showMenu(); mpStatus('Хозяин вернулся в ангар'); }
+    else if (d.t === 'full') { mpStatus('Комната заполнена (максимум 3 пилота)'); net.leave(); renderLobby([]); }
+  }
+});
+net.on('leave', (peer) => {
+  if (net.role === 'host') {
+    const p = mp.guests.get(peer); mp.guests.delete(peer);
+    const idx = mp.seats.get(peer); mp.seats.delete(peer);
+    if (race && idx != null && race.racers[idx]) { const r = race.racers[idx]; r.remote = false; r.net = null; r.ai = { ...race.level, steer: 0, climb: 0, jink: 1, fireHold: 0, think: 0, tx: 0, ty: 0 }; if (mode === 'race') feed(r.name + ' отключился — его ведёт бот'); }
+    hostLobby(); mpStatus(p ? p.name + ' вышел из комнаты' : 'Пилот вышел');
+  } else {
+    net.leave(); renderLobby([]); if (mode !== 'menu') showMenu(); mpStatus('Связь с хозяином комнаты потеряна');
+  }
+});
+net.on('error', (e) => mpStatus('Ошибка сети: ' + ((e && (e.message || e.type)) || e)));
+$('mpHost').onclick = async () => {
+  audio.init(); mpStatus('Создаём комнату…');
+  try {
+    const code = await net.host(); mp.guests.clear();
+    const url = location.origin + location.pathname + '?room=' + code;
+    $('mpUrl').value = url; $('mpLink').hidden = false; $('mpCode').value = code;
+    mpStatus('Комната ' + code + ' открыта. Отправьте ссылку друзьям (до 2 гостей).'); hostLobby();
+  } catch (e) { mpStatus('Не удалось создать комнату: ' + (e.message || e.type || e)); }
+};
+$('mpJoin').onclick = async () => {
+  const code = $('mpCode').value.trim().toUpperCase(); if (code.length < 4) { mpStatus('Введите код комнаты'); return; }
+  audio.init(); mpStatus('Подключаемся к комнате ' + code + '…');
+  try { await net.join(code); net.send({ t: 'hello', p: profile() }); mpStatus('Подключено. Ждём хозяина…'); $('mpLink').hidden = true; renderLobby([]); }
+  catch (e) { mpStatus('Не удалось войти: ' + (e.message || e.type || e)); net.leave(); renderLobby([]); }
+};
+$('mpLeave').onclick = () => { if (net.role === 'host') net.send({ t: 'end' }); net.leave(); mp.guests.clear(); mp.seats.clear(); $('mpLink').hidden = true; renderLobby([]); mpStatus('Вы вышли из комнаты'); };
+$('mpCopy').onclick = () => { const u = $('mpUrl'); u.select(); try { navigator.clipboard.writeText(u.value); mpStatus('Ссылка скопирована'); } catch (e) { document.execCommand('copy'); } };
+// a hidden host tab still runs the race for its guests (browsers pause requestAnimationFrame in background tabs)
+setInterval(() => {
+  if (net.role !== 'host' || !document.hidden || mode !== 'race' || !race || !mp.seats.size) return;
+  for (let k = 0; k < 3; k++) { race.step(1 / 60); for (const e of race.events) mp.outbox.push(e); race.events.length = 0; }
+  hostSend(true);
+}, 50);
 
 function togglePause(v = !paused) {
   if (mode !== 'race') return;
@@ -376,7 +480,8 @@ function toggleMissileCam() {
 }
 
 // ---------------- slow-mo ----------------
-function slowmo(scale, dur) { if (scale < slowScale || slowT <= 0) { slowScale = scale; } slowT = Math.max(slowT, dur); }
+function slowmo(scale, dur) { if (net.role) return; // no slow-motion online: every pilot shares one clock
+ if (scale < slowScale || slowT <= 0) { slowScale = scale; } slowT = Math.max(slowT, dur); }
 
 // ---------------- events -> fx/audio/HUD ----------------
 const tv = new THREE.Vector3(), tv2 = new THREE.Vector3(), nf = newFrame();
@@ -846,7 +951,7 @@ function loop() {
     if (st && !padPrev[9]) togglePause(false);
     if (gp) padPrev[9] = st;
   }
-  if (mode === 'race' && !paused) {
+  if (mode === 'race' && (!paused || net.role)) { // online the race keeps running behind the pause menu
     // slow-mo (real-time driven)
     if (slowT > 0) { slowT -= rdt; if (slowT <= 0) slowScale = 1; }
     const target = slowT > 0 ? slowScale : 1;
@@ -854,7 +959,9 @@ function loop() {
     const dt = rdt * timeScale;
     acc += dt;
     let steps = 0;
-    while (acc >= 1 / 60 && steps < 6) { readInput(); race.step(1 / 60); acc -= 1 / 60; steps++; }
+    while (acc >= 1 / 60 && steps < 6) { readInput(); if (net.role === 'client') clientStep(1 / 60); else race.step(1 / 60); acc -= 1 / 60; steps++; }
+    if (net.role === 'host' && mp.seats.size) { for (const e of race.events) mp.outbox.push(e); hostSend(); }
+    if (net.role === 'client') clientSync(rdt);
     processEvents();
     updateRaceVisuals(dt, rdt);
     const P = race.player;
@@ -884,5 +991,5 @@ function loop() {
   composer.render();
 }
 
-window.__rr = { get race() { return race; }, get fx() { return fx; }, camera, scene, startRace, renderNow: () => { if (mode === 'menu') menuCamera(0.016); composer.render(); return renderer.info.programs.length; } };
+window.__rr = { get race() { return race; }, get fx() { return fx; }, camera, scene, startRace, shim: () => { window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16); loop(); }, get net() { return net; }, get mp() { return mp; }, renderNow: () => { if (mode === 'menu') menuCamera(0.016); composer.render(); return renderer.info.programs.length; } };
 boot().catch(e => { console.error(e); $('loadtext').textContent = 'Ошибка загрузки: ' + e.message; });

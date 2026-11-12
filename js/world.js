@@ -151,9 +151,12 @@ function buildFarTerrain(mat) {
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i) + CX, z = pos.getZ(i) + CZ;
-    const inside = Math.abs(x - CX) < HALF - 10 && Math.abs(z - CZ) < HALF - 10;
+    // inside the detailed terrain the coarse far mesh must stay far below it: its 130 m cells used to poke
+    // whole mountains through the carved canyons (the 'ghost mountains' you flew through)
+    const ax = Math.abs(x - CX), az = Math.abs(z - CZ);
     let h = baseHeight(x, z) * (1 + smooth(4000, 11000, Math.hypot(x, z)) * 1.6);
-    if (inside) h -= 50;
+    if (ax < HALF - 150 && az < HALF - 150) h = -900;
+    else if (ax < HALF + 10 && az < HALF + 10) h -= 60;
     pos.setXYZ(i, x, h, z);
   }
   geo.computeVertexNormals();

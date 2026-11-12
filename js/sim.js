@@ -14,7 +14,7 @@ function makeRacer(i, opts) {
   const def = SHIPS[opts.ship];
   const mDef = MISSILES[opts.missile];
   return {
-    id: i, name: opts.name, human: !!opts.human, ship: opts.ship, def, laser: LASERS[opts.laser], missileDef: mDef,
+    id: i, name: opts.name, human: !!opts.human, remote: !!opts.remote, spawnId: 0, net: null, ship: opts.ship, def, laser: LASERS[opts.laser], missileDef: mDef,
     livery: opts.livery, finish: opts.finish || 'gloss', ai: opts.ai ? { ...opts.ai, steer: 0, climb: 0, jink: R() * 10, fireHold: 0, think: 0, tx: 0, ty: 0 } : null,
     dist: -(i % 5) * 14 - Math.floor(i / 1) * 0, x: ((i % 5) - 2) * 18, y: (i % 2) * 8, vx: 0, vy: 0, speed: 0,
     hp: def.hp, maxHp: def.hp, shield: 0, dome: 0, heat: 0, overheat: 0, charge: 0, fireCd: 0,
@@ -28,21 +28,27 @@ function makeRacer(i, opts) {
 }
 
 export class Race {
-  constructor({ player, difficulty = 1, aiCount = 4 }) {
+  // guests: remote human players (multiplayer host); grid + me: a client rebuilds the host's exact grid
+  constructor({ player, difficulty = 1, aiCount = 4, guests = [], grid: fixed = null, me = 0 }) {
     this.time = 0; this.started = false; this.countdown = RACE.countdown; this.over = false;
     this.events = []; this.bolts = []; this.missiles = []; this.drones = [];
     this.level = AI_LEVELS[difficulty];
     this.racers = [];
-    const grid = [];
-    grid.push({ ...player, human: true });
-    const used = new Set([player.ship]);
-    const names = [...AI_NAMES].sort(() => R() - 0.5);
-    for (let k = 0; k < aiCount; k++) {
-      let ship = (player.ship + 1 + k) % SHIPS.length;
-      grid.push({ name: names[k], ship, laser: Math.floor(R() * LASERS.length), missile: Math.floor(R() * MISSILES.length), livery: SHIP_LIVERIES[ship][(k + 1) % 5], finish: ['gloss', 'metal', 'chrome', 'gloss'][k % 4], ai: this.level });
+    let grid = [];
+    if (fixed) grid = fixed.map(g => ({ ...g, ai: g.ai ? (AI_LEVELS.find(l => l.key === g.ai) || this.level) : null }));
+    else {
+      grid.push({ ...player, human: true });
+      for (const gst of guests) grid.push({ ...gst, human: true, remote: true });
+      const names = [...AI_NAMES].sort(() => R() - 0.5);
+      const nAI = guests.length ? Math.max(0, 5 - grid.length) : aiCount;
+      for (let k = 0; k < nAI; k++) {
+        const ship = (player.ship + 1 + k) % SHIPS.length;
+        grid.push({ name: names[k], ship, laser: Math.floor(R() * LASERS.length), missile: Math.floor(R() * MISSILES.length), livery: SHIP_LIVERIES[ship][(k + 1) % 5], finish: ['gloss', 'metal', 'chrome', 'gloss'][k % 4], ai: this.level });
+      }
     }
-    // human starts at the back row (classic); grid: 2 columns staggered
-    const order = [1, 2, 3, 4, 0];
+    this.grid = grid.map(g => ({ name: g.name, ship: g.ship, laser: g.laser, missile: g.missile, livery: g.livery, finish: g.finish, human: !!g.human, ai: g.ai ? g.ai.key : null }));
+    // humans start at the back rows (classic); grid: 2 columns staggered
+    const order = [...grid.keys()].sort((a, b) => (grid[a].human ? 1 : 0) - (grid[b].human ? 1 : 0));
     order.forEach((gi, slot) => {
       const r = makeRacer(gi, grid[gi]);
       r.dist = -slot * 22; r.x = (slot % 2 ? 1 : -1) * 22 + (slot - 2) * 2; r.y = (slot % 3) * 6;
@@ -52,7 +58,7 @@ export class Race {
     this.dealItems();
     this.spires = FEATURES.spires;
     for (const sp of this.spires) sp.alive = true;
-    this.player = this.racers[0];
+    this.player = this.racers[me];
     this.finishOrder = [];
     this.rank();
   }
@@ -101,10 +107,45 @@ export class Race {
         const b = bounds(wrapS(r.dist)); r.y = clamp(0, b.yMin + 10, b.yMax - 10);
         const rw0 = Math.max(ridgeAt(wrapS(r.dist)), ridgeAt(wrapS(r.dist) + 60)); if (rw0 > 0) r.x = (r.id % 2 ? 1 : -1) * (rw0 + 22);
         r.hp = r.maxHp; r.shield = 0; r.heat = 0; r.protect = RACE.protect; r.speed = r.def.cruise * 0.6;
+        r.spawnId++; r.net = null;
         this.emit({ type: 'respawn', r: r.id });
       }
       return;
     }
+    const inp = r.input, def = r.def;
+    let s;
+    if (r.remote && r.net) { const n = r.net; r.dist = n.dist; r.x = n.x; r.y = n.y; r.vx = n.vx; r.vy = n.vy; r.speed = n.speed; r.bank = n.bank; s = wrapS(r.dist); }
+    else s = this.physics(r, dt);
+    // heat / ammo
+    r.heat = Math.max(0, r.heat - def.cooling * dt * (r.overheat > 0 ? 1.4 : 1));
+    if (r.overheat > 0) r.overheat -= dt;
+    if (r.ammo < r.ammoMax) { r.ammoRegen += dt; if (r.ammoRegen > r.missileDef.regen) { r.ammoRegen = 0; r.ammo++; } }
+    if (F.repair > 0) r.hp = Math.min(r.maxHp, r.hp + 40 / 3 * dt);
+    // checkpoints, strictly in order (absolute index across all laps)
+    while (r.cp < CPS.length * RACE.laps && r.dist >= this.cpDist(r.cp)) {
+      r.cp++;
+      this.emit({ type: 'checkpoint', r: r.id, n: ((r.cp - 1) % CPS.length) + 1, of: CPS.length });
+    }
+    // holographic trail: remember recent positions while the item is active
+    if (F.holo > 0) {
+      r.holoT -= dt;
+      if (r.holoT <= 0) { r.holoT = 0.16; r.holoTrail.push({ s: wrapS(r.dist - 6), x: r.x, y: r.y }); if (r.holoTrail.length > 4) r.holoTrail.shift(); }
+    } else if (r.holoTrail.length) r.holoTrail.length = 0;
+    // finish: all checkpoints of every lap passed
+    if (!r.finished && r.cp >= CPS.length * RACE.laps && r.dist >= RACE.laps * L) {
+      r.finished = true; r.finishTime = this.time; this.finishOrder.push(r.id);
+      this.emit({ type: 'finish', r: r.id, place: this.finishOrder.length });
+    }
+    r.lap = Math.min(RACE.laps, Math.floor(Math.max(0, r.dist) / L) + 1);
+    // ability + item
+    if (inp.ability && r.abilityCd <= 0 && F.emp <= 0) this.useAbility(r);
+    if (inp.item && r.item >= 0 && F.emp <= 0) this.useItem(r);
+    inp.ability = false; inp.item = false;
+  }
+
+  // flight model: speed, steering, corridor, ridge, obstacles, boost rings
+  physics(r, dt) {
+    const F = r.fx;
     const inp = r.input, def = r.def;
     // speed
     let target = def.cruise * (r.ai ? r.ai.speed : 1);
@@ -166,31 +207,7 @@ export class Race {
       const d = dS(s, ring.s);
       if (d > 0 && d < r.speed * dt + 1 && Math.hypot(r.x - ring.x, r.y - ring.y) < 16) { F.ring = 1.4; this.emit({ type: 'ring', r: r.id }); }
     }
-    // heat / ammo
-    r.heat = Math.max(0, r.heat - def.cooling * dt * (r.overheat > 0 ? 1.4 : 1));
-    if (r.overheat > 0) r.overheat -= dt;
-    if (r.ammo < r.ammoMax) { r.ammoRegen += dt; if (r.ammoRegen > r.missileDef.regen) { r.ammoRegen = 0; r.ammo++; } }
-    if (F.repair > 0) r.hp = Math.min(r.maxHp, r.hp + 40 / 3 * dt);
-    // checkpoints, strictly in order (absolute index across all laps)
-    while (r.cp < CPS.length * RACE.laps && r.dist >= this.cpDist(r.cp)) {
-      r.cp++;
-      this.emit({ type: 'checkpoint', r: r.id, n: ((r.cp - 1) % CPS.length) + 1, of: CPS.length });
-    }
-    // holographic trail: remember recent positions while the item is active
-    if (F.holo > 0) {
-      r.holoT -= dt;
-      if (r.holoT <= 0) { r.holoT = 0.16; r.holoTrail.push({ s: wrapS(r.dist - 6), x: r.x, y: r.y }); if (r.holoTrail.length > 4) r.holoTrail.shift(); }
-    } else if (r.holoTrail.length) r.holoTrail.length = 0;
-    // finish: all checkpoints of every lap passed
-    if (!r.finished && r.cp >= CPS.length * RACE.laps && r.dist >= RACE.laps * L) {
-      r.finished = true; r.finishTime = this.time; this.finishOrder.push(r.id);
-      this.emit({ type: 'finish', r: r.id, place: this.finishOrder.length });
-    }
-    r.lap = Math.min(RACE.laps, Math.floor(Math.max(0, r.dist) / L) + 1);
-    // ability + item
-    if (inp.ability && r.abilityCd <= 0 && F.emp <= 0) this.useAbility(r);
-    if (inp.item && r.item >= 0 && F.emp <= 0) this.useItem(r);
-    inp.ability = false; inp.item = false;
+    return s;
   }
 
   cpDist(i) { return Math.floor(i / CPS.length) * L + CPS[i % CPS.length]; }
