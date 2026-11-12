@@ -57,6 +57,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px s
 .liveries button.on { border-color: var(--hot); box-shadow: inset 0 0 0 1px var(--hot); }
 .custom { display: grid; grid-template-columns: 70px 1fr 70px 1fr; gap: 8px; align-items: center; font-size: 12px; color: var(--dim); }
 .sw { height: 28px; border: 1px solid rgba(255,255,255,0.3); cursor: pointer; }
+.pop[hidden] { display: none; }
 .pop { position: fixed; z-index: 40; display: grid; grid-template-columns: repeat(7, 28px); gap: 4px; padding: 8px; background: #140a22; border: 1px solid rgba(255,255,255,0.2); }
 .pop i { height: 28px; cursor: pointer; border: 1px solid rgba(255,255,255,0.2); }
 .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -102,6 +103,17 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px s
 .slot kbd { position: absolute; top: 6px; right: 6px; }
 .slot .ico { font-size: 36px; line-height: 1; }
 .slot.item.full { border-color: currentColor; box-shadow: 0 0 18px currentColor inset; }
+.slot .ico img { width: 44px; height: 44px; display: block; }
+.slot small { font-family: var(--body); font-size: 9.5px; line-height: 1.25; color: var(--dim); letter-spacing: 0; text-transform: none; max-height: 2.6em; overflow: hidden; }
+.slot.item { width: 150px; }
+.toast { position: absolute; left: 50%; bottom: 150px; transform: translate(-50%, 20px); display: flex; gap: 14px; align-items: center; padding: 12px 18px 12px 12px; background: rgba(8, 4, 16, 0.78); border: 1px solid var(--c, #fff); box-shadow: 0 0 24px color-mix(in srgb, var(--c, #fff) 45%, transparent); opacity: 0; transition: opacity .25s, transform .25s; max-width: min(520px, 92vw); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast img { width: 64px; height: 64px; }
+.toast b { display: block; font-size: 20px; letter-spacing: 0.08em; color: var(--c, #fff); }
+.toast span { display: block; font-family: var(--body); font-size: 14px; color: var(--ink); margin-top: 2px; }
+.toast em { display: block; font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 4px; letter-spacing: 0.1em; }
+#tags .ctag img { width: 26px; height: 26px; display: block; filter: drop-shadow(0 0 4px #000); }
+#tags .ctag { position: absolute; transform: translate(-50%, -100%); font-family: var(--display); font-size: 11px; letter-spacing: 0.1em; white-space: nowrap; text-shadow: 0 0 6px #000, 0 0 2px #000; }
 .ring { width: 46px; height: 46px; border-radius: 50%; background: conic-gradient(var(--cyan) var(--p, 100%), rgba(255,255,255,0.1) 0); -webkit-mask: radial-gradient(circle, transparent 54%, #000 56%); mask: radial-gradient(circle, transparent 54%, #000 56%); }
 .pips { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
 .pips i { width: 10px; height: 18px; background: rgba(255,255,255,0.15); transform: skewX(-15deg); }
@@ -114,7 +126,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px s
 #tags .tag { position: absolute; transform: translate(-50%, -100%); font-family: var(--mono); font-size: 11px; text-align: center; white-space: nowrap; }
 #tags .tag i { display: block; height: 3px; width: 54px; margin: 2px auto 0; background: rgba(255,255,255,0.2); }
 #tags .tag i b { display: block; height: 100%; background: var(--hot); }
-.center { position: absolute; left: 50%; top: 36%; transform: translate(-50%, -50%); font-size: 64px; letter-spacing: 0.08em; text-align: center; white-space: nowrap; }
+.center { position: absolute; left: 50%; top: 36%; transform: translate(-50%, -50%); font-size: 64px; letter-spacing: 0.08em; text-align: center; white-space: nowrap; color: #fff; text-shadow: 0 0 18px rgba(255,47,106,0.9), 0 0 4px #000, 0 2px 10px rgba(0,0,0,0.9); }
 .center.popin { animation: popin .35s ease-out; }
 @keyframes popin { from { transform: translate(-50%, -50%) scale(1.6); opacity: 0; } }
 .sub { position: absolute; left: 50%; top: 46%; transform: translateX(-50%); font-size: 18px; letter-spacing: 0.12em; color: var(--amber); text-align: center; white-space: nowrap; }
@@ -137,11 +149,18 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px s
 #resTable tr.me { background: rgba(255,47,106,0.25); }
 #results .row { display: flex; gap: 12px; margin-top: 18px; }
 
+.orbit-hint { position: absolute; right: max(28px, env(safe-area-inset-right)); bottom: 112px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--dim); pointer-events: none; text-shadow: 0 1px 4px #000; }
 @media (max-width: 760px) {
-  .panel { top: 120px; bottom: 110px; }
+  /* tabs stay on one scrollable row; the panel takes the lower part so the ship shows above it */
+  .mhead { gap: 10px; padding: 12px 14px 6px; flex-wrap: nowrap; flex-direction: column; align-items: stretch; }
+  #tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  #tabs button { flex: 0 0 auto; padding: 8px 10px; font-size: 12px; }
+  .panel { top: auto; bottom: 96px; max-height: 50vh; }
+  .orbit-hint { display: none; }
   .start { left: 20px; right: 20px; bottom: 20px; }
   #minimap, .standings { display: none; }
-  .slot { width: 92px; }
+  .slot, .slot.item { width: 92px; }
+  .center { font-size: clamp(28px, 9vw, 64px); }
   #hud .bl { width: 180px; }
   .speed b { font-size: 36px; }
 }
@@ -154,10 +173,13 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px s
 .tbtns button { height: 64px; padding: 0; font-size: 12px; background: rgba(10,4,20,0.5); touch-action: none; }
 .tbtns button.big { background: rgba(255,47,106,0.35); border-color: var(--hot); font-size: 14px; }
 .tbtns button.on { background: rgba(41,243,255,0.4); border-color: var(--cyan); }
-#tPause { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); pointer-events: auto; padding: 6px 14px; }
+#tPause { position: absolute; top: 14px; right: max(14px, env(safe-area-inset-right)); pointer-events: auto; padding: 6px 14px; }
+body.touch #hud .standings, body.touch #minimap { display: none; }
+body.touch .sub { top: 24%; }
 body.touch #hud .bl { bottom: 272px; }
 body.touch #hud .br { bottom: 172px; }
 body.touch .feed { display: none; }
+body.touch .toast { bottom: auto; top: 90px; }
 @media (max-width: 760px) {
   #stick { width: 120px; height: 120px; }
   #stickKnob { width: 50px; height: 50px; margin: -25px; }

@@ -7,8 +7,9 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TRACK, FEATURES, toWorld, frameAt, newFrame, wrapS, sectorName, typeAt, bounds } from './track.js';
 import { buildWorld } from './world.js';
-import { buildShip, updateShipFx, loadShipModels } from './ships.js';
-import { FX, buildCase, buildBoostRing } from './fx.js';
+import { buildShip, updateShipFx, loadShipModels, buildWreck } from './ships.js';
+import { FX, buildCase, setCase, buildBoostRing } from './fx.js';
+import { iconURL } from './icons.js';
 import { Race, dS } from './sim.js';
 import { SHIPS, SHIP_LIVERIES, FINISHES, PALETTE, LASERS, MISSILES, ITEMS, AI_LEVELS, RACE } from './config.js';
 import { Audio } from './audio.js';
@@ -35,6 +36,16 @@ try { const raw = localStorage.getItem('redrift.settings'); if (raw) S = { ...DE
 if (!(S.ship >= 0 && S.ship < SHIPS.length)) S.ship = 0;
 if (S.liveryIdx > 4 || !S.livery) S.liveryIdx = 0;
 if (S.liveryIdx >= 0) S.livery = { ...SHIP_LIVERIES[S.ship][S.liveryIdx] }; // follow the current livery set
+// every airframe remembers its own paint
+if (!S.paint || typeof S.paint !== 'object') S.paint = {};
+S.paint[S.ship] = { idx: S.liveryIdx, livery: { ...S.livery } };
+function rememberPaint() { S.paint[S.ship] = { idx: S.liveryIdx, livery: { ...S.livery } }; }
+function recallPaint(i) {
+  const p = S.paint[i];
+  if (p && p.idx >= 0 && p.idx < 5) { S.liveryIdx = p.idx; S.livery = { ...SHIP_LIVERIES[i][p.idx] }; }
+  else if (p && p.idx === -1 && p.livery) { S.liveryIdx = -1; S.livery = { ...p.livery }; }
+  else { S.liveryIdx = 0; S.livery = { ...SHIP_LIVERIES[i][0] }; }
+}
 const save = () => { try { localStorage.setItem('redrift.settings', JSON.stringify(S)); } catch (e) { /* ignore */ } };
 const GFX = [{ name: 'НИЗКАЯ', pr: 0.75, shadows: false, bloom: 0.6 }, { name: 'СРЕДНЯЯ', pr: 1.25, shadows: true, bloom: 0.8 }, { name: 'ВЫСОКАЯ', pr: 2, shadows: true, bloom: 0.85 }];
 
@@ -118,7 +129,7 @@ function setupHangar() {
   ring2.rotation.x = Math.PI / 2; ring2.position.y = 0.8;
   const beam = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex(), color: 0xff2f6a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.08 }));
   beam.scale.set(34, 5, 1); beam.position.y = 1;
-  pad.add(disc, ring, ring2, beam); pad.position.copy(hangarPos).add(new THREE.Vector3(0, -6, 0));
+  pad.add(disc, ring, ring2, beam); pad.position.copy(hangarPos).add(new THREE.Vector3(0, -3.6, 0));
   const spot = new THREE.SpotLight(0xffffff, 900, 120, 0.6, 0.6, 1.4); spot.position.set(20, 40, 25); spot.target = pad; pad.add(spot);
   const rim = new THREE.PointLight(0x29f3ff, 400, 80, 1.5); rim.position.set(-25, 10, -20); pad.add(rim);
   scene.add(pad);
@@ -129,13 +140,16 @@ function refreshDisplayShip() {
   displayShip.position.copy(hangarPos);
   displayShip.scale.setScalar(1.15);
   scene.add(displayShip);
+  // frame the whole airframe: orbit distance follows the ship's size
+  const bs = new THREE.Box3().setFromObject(displayShip.userData.body).getBoundingSphere(new THREE.Sphere());
+  orbit.base = Math.max(20, bs.radius * 3.0); orbit.dist = orbit.base;
 }
 
 // ---------------- menu UI ----------------
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 function buildMenu() {
   const sl = $('shipList'); sl.innerHTML = '';
-  SHIPS.forEach((sh, i) => { const b = el('button', i === S.ship ? 'on' : '', sh.name); b.onclick = () => { S.ship = i; if (S.liveryIdx >= 0) S.livery = { ...SHIP_LIVERIES[i][S.liveryIdx] }; audio.play('ui'); save(); buildMenu(); refreshDisplayShip(); }; sl.appendChild(b); });
+  SHIPS.forEach((sh, i) => { const b = el('button', i === S.ship ? 'on' : '', sh.name); b.onclick = () => { S.ship = i; recallPaint(i); audio.play('ui'); save(); buildMenu(); refreshDisplayShip(); }; sl.appendChild(b); });
   const sh = SHIPS[S.ship];
   $('shipName').textContent = sh.name; $('shipRole').textContent = sh.role; $('shipDesc').textContent = sh.desc;
   const st = $('shipStats'); st.innerHTML = '';
@@ -145,14 +159,18 @@ function buildMenu() {
   st.appendChild(el('span', '', 'Макс. км/ч')); st.appendChild(el('span', '', String(Math.round(sh.top * 3.6))));
   $('abName').textContent = sh.ability.name; $('abDesc').textContent = sh.ability.desc;
   // liveries
-  const ll = $('liveryList'); ll.innerHTML = '';
-  SHIP_LIVERIES[S.ship].forEach((lv, i) => {
-    const b = el('button', i === S.liveryIdx ? 'on' : '');
-    const strip = el('div', 'strip'); for (const k of ['primary', 'secondary', 'accent', 'neon']) { const c = el('i'); c.style.background = lv[k]; strip.appendChild(c); }
-    b.appendChild(strip); b.appendChild(el('span', '', lv.name));
-    b.onclick = () => { S.liveryIdx = i; S.livery = { ...lv }; audio.play('ui'); save(); buildMenu(); refreshDisplayShip(); };
-    ll.appendChild(b);
-  });
+  // this airframe's five paint schemes: in the Livery tab and right under the ship on the Ship tab
+  for (const ll of [$('liveryList'), $('shipLiveries')]) {
+    ll.innerHTML = '';
+    SHIP_LIVERIES[S.ship].forEach((lv, i) => {
+      const b = el('button', i === S.liveryIdx ? 'on' : '');
+      const strip = el('div', 'strip'); for (const k of ['primary', 'secondary', 'accent', 'neon']) { const c = el('i'); c.style.background = lv[k]; strip.appendChild(c); }
+      b.appendChild(strip); b.appendChild(el('span', '', lv.name));
+      b.onclick = () => { S.liveryIdx = i; S.livery = { ...lv }; rememberPaint(); audio.play('ui'); save(); buildMenu(); refreshDisplayShip(); };
+      ll.appendChild(b);
+    });
+  }
+  $('paintFor').textContent = SHIPS[S.ship].name;
   const fl = $('finishList'); fl.innerHTML = '';
   FINISHES.forEach(f => { const b = el('button', f.key === S.finish ? 'on' : '', f.name); b.onclick = () => { S.finish = f.key; audio.play('ui'); save(); buildMenu(); refreshDisplayShip(); }; fl.appendChild(b); });
   document.querySelectorAll('.sw').forEach(sw => {
@@ -160,7 +178,7 @@ function buildMenu() {
     sw.onclick = (ev) => {
       const pop = $('swatchPop'); pop.innerHTML = ''; pop.hidden = false;
       const r = sw.getBoundingClientRect(); pop.style.left = Math.min(r.left, innerWidth - 230) + 'px'; pop.style.top = (r.bottom + 6) + 'px';
-      PALETTE.forEach(c => { const i = el('i'); i.style.background = c; i.onclick = () => { S.livery = { ...S.livery, [slot]: c, name: 'СВОЯ' }; S.liveryIdx = -1; pop.hidden = true; save(); buildMenu(); refreshDisplayShip(); }; pop.appendChild(i); });
+      PALETTE.forEach(c => { const i = el('i'); i.style.background = c; i.onclick = () => { S.livery = { ...S.livery, [slot]: c, name: 'СВОЯ' }; S.liveryIdx = -1; rememberPaint(); pop.hidden = true; save(); buildMenu(); refreshDisplayShip(); }; pop.appendChild(i); });
       ev.stopPropagation();
     };
   });
@@ -182,9 +200,9 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   audio.init(); audio.play('ui');
 });
 function showMenu() {
-  mode = 'menu'; clearRace();
+  mode = 'menu'; clearRace(); audio.setIntensity(0); if (audio.ctx) { audio.stopEngine(); audio.beamOn(false); } r0beamSound = false;
   ['hud', 'pause', 'results'].forEach(id => $(id).classList.add('hidden')); showTouch(false);
-  $('menu').classList.remove('hidden');
+  $('menu').classList.remove('hidden'); canvas.style.cursor = 'grab';
   buildMenu(); refreshDisplayShip(); pad.visible = true;
 }
 $('startBtn').onclick = () => { audio.init(); startRace(); };
@@ -195,7 +213,7 @@ $('againBtn').onclick = () => startRace();
 $('hangarBtn').onclick = () => showMenu();
 
 // ---------------- race ----------------
-let race = null, raceGroup = null, shipMeshes = [], caseMeshes = [], ghosts = [], droneSprites = [], holoMeshes = [];
+let race = null, raceGroup = null, shipMeshes = [], caseMeshes = [], ghosts = [], droneSprites = [], holoMeshes = [], wrecks = [];
 let paused = false, acc = 0, timeScale = 1, slowT = 0, slowScale = 1;
 let camMode = 0, missileCam = false, mcamHold = 0, mcamLast = new THREE.Vector3(), deathPos = null;
 let lapStart = 0, lastLap = 1, bestLap = Infinity, lastSector = '', sectorT = 0, finishT = -1;
@@ -204,7 +222,7 @@ const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 
 function clearRace() {
   if (raceGroup) { scene.remove(raceGroup); raceGroup = null; }
-  race = null; shipMeshes = []; caseMeshes = []; ghosts = []; droneSprites = []; holoMeshes = [];
+  race = null; shipMeshes = []; caseMeshes = []; ghosts = []; droneSprites = []; holoMeshes = []; wrecks = [];
   for (const sp of FEATURES.spires) { if (sp.mesh) sp.mesh.visible = true; sp.alive = true; }
   if (fx) { fx.syncBolts([], toWorld); fx.syncMissiles([], toWorld, 0); fx.endBeamFrame(); }
 }
@@ -220,7 +238,7 @@ function startRace() {
     const ds = []; for (let k = 0; k < 3; k++) { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex(), color: 0xff8a1e, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false })); s.scale.setScalar(3); s.visible = false; raceGroup.add(s); ds.push(s); }
     droneSprites[i] = ds;
   });
-  for (const p of race.pickups) { const c = buildCase(0xffffff); raceGroup.add(c); caseMeshes.push(c); }
+  for (const p of race.pickups) { const c = buildCase(); raceGroup.add(c); caseMeshes.push(c); }
   const f = newFrame();
   for (const ring of FEATURES.boostRings) {
     const m = buildBoostRing(); frameAt(ring.s, f);
@@ -231,11 +249,11 @@ function startRace() {
   for (const cs of FEATURES.checkpoints.slice(0, -1)) raceGroup.add(buildGate(cs, f));
   paused = false; acc = 0; timeScale = 1; slowT = 0; camMode = 0; missileCam = false; deathPos = null;
   lapStart = 0; lastLap = 1; bestLap = Infinity; lastSector = ''; finishT = -1; hurt = 0;
-  mode = 'race';
-  $('menu').classList.add('hidden'); $('results').classList.add('hidden'); $('hud').classList.remove('hidden'); showTouch(true);
+  mode = 'race'; audio.setIntensity(1);
+  $('menu').classList.add('hidden'); $('results').classList.add('hidden'); $('hud').classList.remove('hidden'); showTouch(true); canvas.style.cursor = '';
   $('hCpN').textContent = FEATURES.checkpoints.length;
   $('hMslName').textContent = MISSILES[S.missile].name; $('hAbName').textContent = SHIPS[S.ship].ability.name;
-  $('hFeed').innerHTML = '';
+  $('hFeed').innerHTML = ''; $('hSub').textContent = ''; subT = 0; toastT = 0; $('hToast').classList.remove('show'); $('hItem').dataset.key = '-';
   const p = race.player; placeCamera(p, 1, true);
   center('3', true);
 }
@@ -262,6 +280,7 @@ function buildGate(cs, f) {
 function togglePause(v = !paused) {
   if (mode !== 'race') return;
   paused = v; $('pause').classList.toggle('hidden', !paused);
+  if (paused && audio.ctx) { audio.stopEngine(); audio.beamOn(false); r0beamSound = false; }
 }
 
 // ---------------- input ----------------
@@ -282,8 +301,8 @@ window.addEventListener('keydown', e => {
     if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
     if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
   }
-  if (e.code === 'KeyM') audio.setMuted(!audio.muted);
-  if (e.code === 'KeyN') audio.musicOn = !audio.musicOn;
+  if (e.code === 'KeyM') { audio.setMuted(!audio.muted); sub(audio.muted ? 'ЗВУК ВЫКЛЮЧЕН · M' : 'ЗВУК ВКЛЮЧЁН · M', 1.2); }
+  if (e.code === 'KeyN') { audio.musicOn = !audio.musicOn; sub(audio.musicOn ? 'МУЗЫКА ВКЛЮЧЕНА · N' : 'МУЗЫКА ВЫКЛЮЧЕНА · N', 1.2); }
 });
 window.addEventListener('keyup', e => keys.delete(e.code));
 window.addEventListener('blur', () => { keys.clear(); mouse0 = false; if (mode === 'race' && !paused) togglePause(true); });
@@ -362,10 +381,26 @@ function slowmo(scale, dur) { if (scale < slowScale || slowT <= 0) { slowScale =
 // ---------------- events -> fx/audio/HUD ----------------
 const tv = new THREE.Vector3(), tv2 = new THREE.Vector3(), nf = newFrame();
 function worldNormal(s, nx, ny) { frameAt(s, nf); return new THREE.Vector3().addScaledVector(nf.r, nx).addScaledVector(nf.u, ny).normalize(); }
+// positional one-shot: distance from the camera dulls the sound, the side of the screen pans it
+const _sv = new THREE.Vector3(), _right = new THREE.Vector3();
+function sfx(name, pos, mul = 1) {
+  if (!pos) return audio.play(name);
+  const d = pos.distanceTo(camera.position) * mul;
+  _right.setFromMatrixColumn(camera.matrixWorld, 0);
+  const pan = d > 0.5 ? _sv.subVectors(pos, camera.position).normalize().dot(_right) : 0;
+  audio.play(name, d, pan * 0.85);
+}
 function feed(html) { const d = el('div', '', html); $('hFeed').prepend(d); setTimeout(() => d.remove(), 5000); while ($('hFeed').children.length > 5) $('hFeed').lastChild.remove(); }
 const nameOf = (r) => `<span style="color:${r.livery.primary}">${r.name}</span>`;
 function center(t, pop = false) { const c = $('hCenter'); c.textContent = t; if (pop) { c.classList.remove('popin'); void c.offsetWidth; c.classList.add('popin'); } }
 let subT = 0; function sub(t, dur = 1.6) { $('hSub').textContent = t; subT = dur; }
+// pickup card: what the case gave and what it does
+let toastT = 0;
+function toast(it) {
+  const t = $('hToast'); t.style.setProperty('--c', it.color);
+  t.innerHTML = `<img src="${iconURL(it.key, it.color, 96)}" alt=""><div><b>${it.name}</b><span>${it.desc}</span><em>${isTouch ? 'кнопка КЕЙС' : 'E'} — применить</em></div>`;
+  t.classList.remove('show'); void t.offsetWidth; t.classList.add('show'); toastT = 3.2;
+}
 
 function processEvents() {
   const P = race.player;
@@ -373,13 +408,13 @@ function processEvents() {
   for (const e of race.events) {
     switch (e.type) {
       case 'go': center('СТАРТ!', true); audio.play('go'); setTimeout(() => { if (race && race.started) center(''); }, 900); break;
-      case 'shot': { const r = race.racers[e.r]; if (r === P || Math.random() < 0.3) audio.play(e.kind === 'prism' ? 'prism' : 'pulse', camDist(shipMeshes[e.r].position)); break; }
+      case 'shot': { const r = race.racers[e.r]; if (r === P || Math.random() < 0.3) sfx(e.kind === 'prism' ? 'prism' : 'pulse', shipMeshes[e.r].position); break; }
       case 'hit': {
         const p = toWorld(e.s, e.x, e.y, tv).clone();
         fx.hitImpact(p, tv2.subVectors(camera.position, p).normalize(), e.color);
         if (e.big) fx.explosion(p, 0.35, { debris: 4, ring: false });
         if (e.v === P.id) { hurt = Math.min(1, hurt + 0.35); hitShake = Math.min(1, hitShake + 0.3); audio.play('hurt'); }
-        else audio.play('hit', camDist(p));
+        else sfx('hit', p);
         break;
       }
       case 'wallhit': { const p = toWorld(e.s, e.x, e.y, tv).clone(); fx.wallHit(p, worldNormal(e.s, e.nx, e.ny), e.color); break; }
@@ -389,11 +424,11 @@ function processEvents() {
         if (e.r === P.id || e.a === P.id || e.b === P.id) { hitShake = 1; audio.play('hurt'); if (e.type === 'crash') sub('СТОЛКНОВЕНИЕ!'); }
         break;
       }
-      case 'rail': { const a = toWorld(e.s0, e.x0, e.y0, tv).clone(), b = toWorld(e.s1, e.x1, e.y1, tv2).clone(); fx.railTrail(a, b, e.color); audio.play('rail', camDist(a)); break; }
-      case 'missile': audio.play('missile', camDist(shipMeshes[e.r].position)); break;
+      case 'rail': { const a = toWorld(e.s0, e.x0, e.y0, tv).clone(), b = toWorld(e.s1, e.x1, e.y1, tv2).clone(); fx.railTrail(a, b, e.color); sfx('rail', a); break; }
+      case 'missile': sfx('missile', shipMeshes[e.r].position); break;
       case 'explode': {
         const p = toWorld(e.s, e.x, e.y, tv).clone(); fx.explosion(p, e.scale, { color: 0xff7a30 });
-        const d = camDist(p); audio.play(e.scale > 1 ? 'bigexplode' : 'explode', d);
+        const d = camDist(p); sfx(e.scale > 1 ? 'bigexplode' : 'explode', p);
         if (d < 70) { fx.shake = Math.max(fx.shake, 1 - d / 70); if (e.scale >= 1) slowmo(0.35, 0.5); }
         if (missileCam && e.owner === P.id) { mcamHold = 1.1; mcamLast.copy(p); }
         break;
@@ -403,6 +438,7 @@ function processEvents() {
         const p = toWorld(e.s, e.x, e.y, tv).clone();
         fx.explosion(p, 1.6, { color: 0xff9040, debris: 26, debrisColor: new THREE.Color(v.livery.primary).getHex() });
         fx.spawnDebris(p, 16, new THREE.Color(v.livery.secondary).getHex(), 70, 1.6);
+        spawnWreck(v);
         const d = camDist(p); audio.play('bigexplode', d * 0.5);
         feed(k && k !== v ? `${nameOf(k)} <b>✕</b> ${nameOf(v)}` : `${nameOf(v)} разбился`);
         if (v === P) { deathPos = p.clone(); slowmo(0.2, 1.4); center('СБИТ', true); missileCam = false; }
@@ -411,22 +447,22 @@ function processEvents() {
         break;
       }
       case 'respawn': if (e.r === P.id) { center(''); deathPos = null; sub(`ВОЗВРАТ НА ТРАССУ · −${RACE.rollback} м`); } break;
-      case 'checkpoint': if (e.r === P.id && e.n < e.of) { sub(`КОНТРОЛЬНАЯ ТОЧКА ${e.n}/${e.of}`, 1.0); audio.play('ui'); } break;
+      case 'checkpoint': if (e.r === P.id && e.n < e.of) { sub(`КОНТРОЛЬНАЯ ТОЧКА ${e.n}/${e.of}`, 1.0); audio.play('checkpoint'); } break;
       case 'phantom': { const p = toWorld(e.s, e.x, e.y, tv).clone(); fx.flash(p, '#7dfcff', 14, 0.3); fx.sparks(p, tv2.set(0, 1, 0), 30, 0x7dfcff, 60); if (e.r === P.id) sub('ФАНТОМ ПРИНЯЛ РАКЕТУ'); break; }
       case 'shatter': { const sp = race.spires[e.sp]; fx.shatterRock(sp); const d = camDist(sp.mesh.position); audio.play('bigexplode', d * 0.6); if (d < 260) slowmo(0.3, 0.9); break; }
       case 'pickup': {
         const p = toWorld(e.s, e.x, e.y, tv).clone(); const it = ITEMS[e.item];
         fx.sparks(p, tv2.set(0, 1, 0), 30, it.color, 40); fx.flash(p, it.color, 10, 0.3);
-        if (e.r === P.id) { audio.play('pickup'); sub('КЕЙС: ' + it.name + ' · E'); }
+        if (e.r === P.id) { audio.play('pickup'); toast(it); }
         break;
       }
       case 'item': {
         const r = race.racers[e.r]; const p = shipMeshes[e.r].position;
-        if (e.item === 'chrono') { audio.play('chrono', camDist(p)); fx.explosion(p.clone(), 0.01, { ring: true, debris: 0, color: 0xa05cff }); for (let i = 0; i < 80; i++) fx.add.emit(p, tv2.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(160), new THREE.Color(0xa05cff), 3, 1.2, { drag: 2 }); if (r === P) slowmo(0.5, 0.6); else if (race.player.fx.slow > 0) sub('ВАС ЗАМЕДЛИЛИ!'); }
-        if (e.item === 'emp') { audio.play('emp', camDist(p)); for (let i = 0; i < 120; i++) fx.add.emit(p, tv2.set(Math.random() - 0.5, (Math.random() - 0.5) * 0.3, Math.random() - 0.5).normalize().multiplyScalar(220), new THREE.Color(0x60b0ff), 2, 0.8, { drag: 1 }); if (r !== P && P.fx.emp > 0) { sub('ЭМИ! ОРУЖИЕ ЗАГЛУШЕНО'); empFx = 1; } }
-        if (e.item === 'nova') audio.play('nova', camDist(p));
-        if (e.item === 'boost' || e.item === 'magnet' || e.item === 'holo') audio.play('item', camDist(p));
-        if (r === P) audio.play('item');
+        if (e.item === 'chrono') { sfx('chrono', p); fx.explosion(p.clone(), 0.01, { ring: true, debris: 0, color: 0xa05cff }); for (let i = 0; i < 80; i++) fx.add.emit(p, tv2.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(160), new THREE.Color(0xa05cff), 3, 1.2, { drag: 2 }); if (r === P) slowmo(0.5, 0.6); else if (race.player.fx.slow > 0) sub('ВАС ЗАМЕДЛИЛИ!'); }
+        if (e.item === 'emp') { sfx('emp', p); for (let i = 0; i < 120; i++) fx.add.emit(p, tv2.set(Math.random() - 0.5, (Math.random() - 0.5) * 0.3, Math.random() - 0.5).normalize().multiplyScalar(220), new THREE.Color(0xe6f2ff), 2, 0.8, { drag: 1 }); if (r !== P && P.fx.emp > 0) { sub('ЭМИ! ОРУЖИЕ ЗАГЛУШЕНО'); empFx = 1; } }
+        if (e.item === 'nova') sfx('nova', p);
+        if (['boost', 'shield', 'repair', 'holo'].includes(e.item)) sfx(e.item, p);
+        if (r === P) { const used = ITEMS.find(i => i.key === e.item); if (used) sub(used.name + ' — АКТИВИРОВАН', 1.2); }
         if (r !== P && ['nova', 'chrono', 'emp'].includes(e.item)) feed(`${nameOf(r)} → ${ITEMS.find(i => i.key === e.item).name}`);
         break;
       }
@@ -436,12 +472,39 @@ function processEvents() {
       case 'finish': {
         const r = race.racers[e.r];
         feed(`${nameOf(r)} финишировал ${e.place}-м`);
-        if (r === P) { finishT = 3; center(e.place === 1 ? 'ПОБЕДА!' : `ФИНИШ · ${e.place} МЕСТО`, true); r.ai = { ...AI_LEVELS[1], steer: 0, climb: 0, jink: 0, think: 0, tx: 0, ty: 0 }; slowmo(0.3, 1.5); }
+        if (r === P) { const lt = race.time - lapStart; if (lt > 1) bestLap = Math.min(bestLap, lt); finishT = 3; center(e.place === 1 ? 'ПОБЕДА!' : `ФИНИШ · ${e.place} МЕСТО`, true); r.ai = { ...AI_LEVELS[1], steer: 0, climb: 0, jink: 0, think: 0, tx: 0, ty: 0 }; slowmo(0.3, 1.5); }
         break;
       }
     }
   }
   race.events.length = 0;
+}
+
+// ---------------- breakup: the dying ship splits into nose, tail and wings ----------------
+function spawnWreck(r) {
+  const m = shipMeshes[r.id]; if (!m || !raceGroup) return;
+  const root = new THREE.Group(); root.position.copy(m.position); root.quaternion.copy(m.quaternion); root.rotation.z += 0; raceGroup.add(root);
+  root.updateMatrixWorld(true);
+  const pieces = buildWreck(m);
+  for (const pc of pieces) { pc.g.rotation.z = m.userData.body.rotation.z; root.add(pc.g); }
+  wrecks.push({ root, pieces, t: 0 });
+  if (wrecks.length > 6) { const w = wrecks.shift(); raceGroup.remove(w.root); }
+}
+const _wp = new THREE.Vector3(), _down = new THREE.Vector3();
+function updateWrecks(dt) {
+  for (let i = wrecks.length - 1; i >= 0; i--) {
+    const w = wrecks[i]; w.t += dt;
+    _down.set(0, -1, 0).applyQuaternion(w.root.quaternion.clone().invert());
+    for (const pc of w.pieces) {
+      pc.vel.multiplyScalar(1 - Math.min(1, dt * 0.5)); pc.vel.addScaledVector(_down, 14 * dt);
+      pc.g.position.addScaledVector(pc.vel, dt);
+      pc.g.rotation.x += pc.spin.x * dt; pc.g.rotation.y += pc.spin.y * dt; pc.g.rotation.z += pc.spin.z * dt;
+      pc.g.getWorldPosition(_wp);
+      if (Math.random() < dt * 30) fx.smoke.emit(_wp, new THREE.Vector3((Math.random() - 0.5) * 3, 2, (Math.random() - 0.5) * 3), new THREE.Color(0x1a1716), 2.5, 1.6, { grow: 6, alpha: 0.55 });
+      if (w.t < 1.4 && Math.random() < dt * 40) fx.add.emit(_wp, new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6), new THREE.Color(1, 0.5, 0.15), 2.4, 0.35, { grow: 2 });
+    }
+    if (w.t > 4.5) { raceGroup.remove(w.root); wrecks.splice(i, 1); }
+  }
 }
 
 // ---------------- visuals ----------------
@@ -462,13 +525,20 @@ function updateRaceVisuals(dt, rdt) {
     m.up.copy(f0.u); m.lookAt(tv2);
     m.userData.body.rotation.z = -r.bank * 1.1;
     m.visible = r.protect > 0 ? Math.floor(gtime * 14) % 2 === 0 : (r.fx.phase > 0 ? Math.floor(gtime * 30) % 3 !== 0 : true);
+    if (r === P && camMode === 2 && !missileCam) m.visible = false; // cockpit view: no slab of own fuselage
     const power = Math.min(1.6, r.speed / r.def.top + (r.fx.boost > 0 || r.fx.dash > 0 || r.fx.ring > 0 ? 0.6 : 0));
     updateShipFx(m, gtime, power, { shield: (r.shield > 0 ? 0.55 : 0) + (r.dome > 0 ? 0.9 : 0), overload: r.fx.overload > 0 });
-    fx.damageSmoke(pos, r.hp / r.maxHp, dt);
+    const hpF = r.hp / r.maxHp;
+    m.userData.refs.setDamage(Math.max(0, Math.min(1, 1 - hpF)));
+    fx.damageSmoke(pos, hpF, dt);
+    if (hpF < 0.35) for (const ex of m.userData.refs.exits) { // engine failure: fire and black smoke from the nozzles
+      if (Math.random() < dt * 25) { const wp = m.userData.body.localToWorld(ex.clone()); fx.add.emit(wp, new THREE.Vector3((Math.random() - 0.5) * 4, 2, (Math.random() - 0.5) * 4), new THREE.Color(1, 0.45 + Math.random() * 0.2, 0.1), 2.6, 0.28, { grow: 2 }); if (Math.random() < 0.5) fx.smoke.emit(wp, new THREE.Vector3(0, 3, 0), new THREE.Color(0x141210), 2.2, 1.6, { grow: 6, alpha: 0.6 }); }
+    }
     if (r.fx.emp > 0 && Math.random() < 0.5) fx.add.emit(tv2.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 10)), new THREE.Vector3(), new THREE.Color(0x60b0ff), 1.5, 0.12);
     if (r.fx.slow > 0 && Math.random() < 0.6) fx.add.emit(pos, new THREE.Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8), new THREE.Color(0xa05cff), 2.5, 0.5);
     if (r.fx.phase > 0 && Math.random() < 0.8) fx.add.emit(pos, new THREE.Vector3(), new THREE.Color(0xffffff), 4, 0.25);
     if (r.charge > 0) fx.add.emit(tv2.copy(pos).addScaledVector(f0.t, 8), new THREE.Vector3(), new THREE.Color(r.laser.color), 1 + r.charge * 5, 0.05);
+    if (r !== P) { const near = pos.distanceTo(camera.position) < 22; if (near && !r._near) sfx('flyby', pos); r._near = near; }
     // decoy ghost
     if (r.fx.decoy > 0) {
       if (!ghosts[i]) { const g = buildShip(r.def.key, r.livery, 'gloss', i + 1); g.traverse(o => { if (o.isMesh && o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.35; o.material.depthWrite = false; } }); raceGroup.add(g); ghosts[i] = g; }
@@ -496,9 +566,9 @@ function updateRaceVisuals(dt, rdt) {
     }
     if (r.fx.nova > 0 && r.novaEnd) {
       const end = toWorld(r.novaEnd.s, r.novaEnd.x, r.novaEnd.y, new THREE.Vector3());
-      fx.setBeam('n' + i, nose, end, '#ff3050', 9 + Math.sin(gtime * 40) * 2);
+      fx.setBeam('n' + i, nose, end, '#ffc24a', 9 + Math.sin(gtime * 40) * 2);
       fx.setBeam('nc' + i, nose, end, '#ffffff', 3);
-      fx.sparks(end, tv2.subVectors(nose, end).normalize(), 6, 0xff5050, 80);
+      fx.sparks(end, tv2.subVectors(nose, end).normalize(), 6, 0xffc24a, 80);
       if (r === P) hitShake = Math.max(hitShake, 0.25);
     }
   });
@@ -508,21 +578,20 @@ function updateRaceVisuals(dt, rdt) {
   race.pickups.forEach((p, i) => {
     const c = caseMeshes[i]; c.visible = p.active;
     if (!p.active) return;
-    const ok = race.canTake(P, p); c.scale.setScalar(ok ? 1 : 0.5);
-    c.position.copy(toWorld(p.s, p.x, p.y + Math.sin(gtime * 2 + i) * 1.2, tv));
-    c.rotation.y += rdt * 1.5; c.userData.core.rotation.x += rdt;
-    const hue = (gtime * 0.15 + i * 0.07) % 1;
-    c.userData.frame.material.color.setHSL(hue, ok ? 1 : 0, ok ? 0.5 : 0.25).multiplyScalar(ok ? 3 : 1);
-    c.userData.ring.material.color.setHSL((hue + 0.5) % 1, 1, 0.5).multiplyScalar(2.5);
-    c.userData.halo.material.color.setHSL(hue, 1, 0.6);
+    const it = ITEMS[p.item];
+    setCase(c, it.key, it.color, !race.canTake(P, p) || P.item >= 0);
+    c.position.copy(toWorld(p.s, p.x, p.y + Math.sin(gtime * 2 + i) * 0.8, tv));
+    c.rotation.y += rdt * 0.7; c.rotation.x = Math.sin(gtime * 0.8 + i) * 0.12;
+    c.userData.icon.position.y = Math.sin(gtime * 3 + i) * 0.15;
   });
+  updateWrecks(dt);
   fx.syncBolts(race.bolts, toWorld);
   fx.syncMissiles(race.missiles, toWorld, dt);
   fx.time = gtime;
   fx.update(dt);
 }
 let r0beamSound = false;
-const holoMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x7dfcff).multiplyScalar(1.6), transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
+const holoMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff4fd8).multiplyScalar(1.6), transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
 
 function placeCamera(P, dt, snap = false) {
   const s = wrapS(P.dist);
@@ -570,7 +639,8 @@ function placeCamera(P, dt, snap = false) {
   }
   const sh = (fx.shake + hitShake * 0.6) * 0.9;
   if (sh > 0.01) { camera.position.x += (Math.random() - 0.5) * sh; camera.position.y += (Math.random() - 0.5) * sh; camera.position.z += (Math.random() - 0.5) * sh; }
-  camera.fov += (Math.min(108, fov) - camera.fov) * Math.min(1, dt * 4);
+  if (camera.aspect < 1.25) fov = Math.max(fov, 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(70) / 2) / camera.aspect) * 180 / Math.PI);
+  camera.fov += (Math.min(camera.aspect < 1.25 ? 118 : 108, fov) - camera.fov) * Math.min(1, dt * 4);
   camera.updateProjectionMatrix();
 }
 
@@ -599,7 +669,7 @@ function minimap() {
     if (r.human) { mmx.strokeStyle = '#fff'; mmx.lineWidth = 2; mmx.stroke(); }
   }
 }
-const tagPool = [];
+const tagPool = [], caseTagPool = [];
 function updateHUD(rdt) {
   const P = race.player;
   hudT -= rdt; subT -= rdt; if (subT <= 0) $('hSub').textContent = '';
@@ -613,7 +683,12 @@ function updateHUD(rdt) {
   document.querySelector('.meter.heat').classList.toggle('over', P.overheat > 0);
   // item / ability / missiles
   const it = P.item >= 0 ? ITEMS[P.item] : null;
-  $('hItemIco').textContent = it ? it.icon : '·'; $('hItemName').textContent = it ? it.name : 'ПУСТО';
+  if ($('hItem').dataset.key !== (it ? it.key : '')) {
+    $('hItem').dataset.key = it ? it.key : '';
+    $('hItemIco').innerHTML = it ? `<img src="${iconURL(it.key, it.color, 72)}" alt="">` : '·';
+    $('hItemName').textContent = it ? it.name : 'ПУСТО'; $('hItemDesc').textContent = it ? it.desc : 'влетите в кейс';
+  }
+  toastT -= rdt; if (toastT <= 0) $('hToast').classList.remove('show');
   $('hItem').classList.toggle('full', !!it); $('hItem').style.color = it ? it.color : '';
   $('hAbRing').style.setProperty('--p', (100 - P.abilityCd / P.def.ability.cd * 100) + '%');
   $('hAbility').style.opacity = P.abilityCd > 0 ? 0.6 : 1;
@@ -624,7 +699,7 @@ function updateHUD(rdt) {
   $('hTime').textContent = fmt(t);
   if (P.lap !== lastLap && P.lap > lastLap) { const lt = t - lapStart; bestLap = Math.min(bestLap, lt); lapStart = t; lastLap = P.lap; center(P.lap === RACE.laps ? 'ПОСЛЕДНИЙ КРУГ' : `КРУГ ${P.lap}`, true); setTimeout(() => { if (race && !P.finished) center(''); }, 1400); sub('Круг: ' + fmt(lt)); }
   $('hLap').textContent = Math.min(P.lap || 1, RACE.laps);
-  const nCp = FEATURES.checkpoints.length; $('hCp').textContent = P.finished ? nCp : Math.max(0, P.cp - (Math.min(P.lap, RACE.laps) - 1) * nCp);
+  const nCp = FEATURES.checkpoints.length; $('hCp').textContent = P.finished ? nCp : Math.max(0, (P.cp || 0) - (Math.min(P.lap || 1, RACE.laps) - 1) * nCp);
   $('hBest').textContent = 'лучший круг ' + fmt(bestLap) + ' · круг ' + fmt(t - lapStart);
   $('hPos').textContent = P.place;
   // sector banner
@@ -675,10 +750,27 @@ function updateHUD(rdt) {
     n++;
   }
   for (let i = n; i < tagPool.length; i++) tagPool[i].style.display = 'none';
+  let m = 0; const ps = wrapS(P.dist);
+  let gNear = -1, gd = 1e9;
+  for (const p of race.pickups) { const d = dS(p.s, ps); if (p.active && d > 30 && d < 330 && d < gd && race.canTake(P, p)) { gd = d; gNear = p.group; } }
+  if (!P.dead && P.item < 0) race.pickups.forEach((p, i) => {
+    if (!p.active || p.group !== gNear || m >= 6) return;
+    const d = dS(p.s, ps); if (d < 30 || d > 330) return;
+    const sp = caseMeshes[i].position.clone(); sp.y += 4.2; sp.project(camera);
+    if (sp.z > 1 || Math.abs(sp.x) > 1.05 || Math.abs(sp.y) > 1.05) return;
+    const it = ITEMS[p.item];
+    let t = caseTagPool[m]; if (!t) { t = el('div', 'ctag'); $('tags').appendChild(t); caseTagPool.push(t); }
+    t.style.display = ''; t.style.left = ((sp.x + 1) / 2 * innerWidth) + 'px'; t.style.top = ((1 - sp.y) / 2 * innerHeight) + 'px';
+    const far = d > 150, k = it.key + (far ? ':far' : '');
+    if (t.dataset.k !== k) { t.dataset.k = k; t.innerHTML = far ? `<img src="${iconURL(it.key, it.color, 40)}" alt="${it.name}">` : it.name; t.style.color = it.color; }
+    t.style.opacity = far ? 0.8 : 1;
+    m++;
+  });
+  for (let i = m; i < caseTagPool.length; i++) caseTagPool[i].style.display = 'none';
 }
 
 function showResults() {
-  mode = 'results';
+  mode = 'results'; audio.setIntensity(0.4); if (audio.ctx) { audio.stopEngine(); audio.beamOn(false); } r0beamSound = false;
   $('hud').classList.add('hidden'); $('results').classList.remove('hidden'); showTouch(false);
   const P = race.player;
   const total = RACE.laps * TRACK.length;
@@ -696,21 +788,63 @@ function showResults() {
 const clock = new THREE.Clock();
 const FAR = new THREE.Vector3(1e6, 1e6, 1e6);
 let menuA = 0;
+// hangar orbit camera: drag to rotate, wheel to zoom; idles into a slow sway with the sun behind the camera
+const SUN_AZ = Math.atan2(0.66, -0.72);
+const orbit = { az: SUN_AZ + 0.6, el: 0.32, dist: 30, base: 30, idle: 99, drag: null };
+canvas.addEventListener('pointerdown', (e) => {
+  if (mode !== 'menu') return;
+  orbit.drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; orbit.idle = 0; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing';
+});
+canvas.addEventListener('pointermove', (e) => {
+  const d = orbit.drag; if (!d || d.id !== e.pointerId || mode !== 'menu') return;
+  orbit.az += (e.clientX - d.x) * 0.008; orbit.el = Math.max(0.02, Math.min(1.25, orbit.el + (e.clientY - d.y) * 0.005));
+  d.x = e.clientX; d.y = e.clientY; orbit.idle = 0;
+});
+const endDrag = () => { orbit.drag = null; canvas.style.cursor = mode === 'menu' ? 'grab' : ''; };
+canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', (e) => { if (mode !== 'menu') return; orbit.dist = Math.max(12, Math.min(60, orbit.dist * (e.deltaY > 0 ? 1.08 : 0.93))); orbit.idle = 0; e.preventDefault(); }, { passive: false });
+function menuCamera(rdt) {
+  orbit.idle += rdt;
+  if (orbit.idle > 4 && !orbit.drag) { // drift back toward a flattering, sun-behind-camera angle
+    const target = SUN_AZ + Math.sin(menuA * 0.6) * 0.9;
+    const dAz = ((target - orbit.az + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    orbit.az += dAz * Math.min(1, rdt * 0.4); orbit.el += (0.32 - orbit.el) * Math.min(1, rdt * 0.4);
+  }
+  const c = Math.cos(orbit.el);
+  camera.position.copy(hangarPos).add(tv.set(Math.cos(orbit.az) * c * orbit.dist, 1 + Math.sin(orbit.el) * orbit.dist, Math.sin(orbit.az) * c * orbit.dist));
+  camera.up.set(0, 1, 0); camera.lookAt(tv2.copy(hangarPos).add(new THREE.Vector3(0, 0.6, 0)));
+  camera.fov = 45;
+  // keep the ship clear of the settings panel on wide screens
+  const panel = $('panel'), w = innerWidth, h = innerHeight;
+  const shift = w > 760 && panel && !$('menu').classList.contains('hidden') ? Math.min((panel.getBoundingClientRect().right + 10) / 2, w * 0.2) : 0;
+  if (shift) camera.setViewOffset(w, h, -shift * 0.9, 0, w, h);
+  else if (w <= 760 && !$('menu').classList.contains('hidden')) camera.setViewOffset(w, h, 0, h * 0.24, w, h); // phone: ship above the bottom panel
+  else camera.clearViewOffset();
+  camera.updateProjectionMatrix();
+}
 function loop() {
   requestAnimationFrame(loop);
   const rdt = Math.min(0.05, clock.getDelta());
   cinema.uniforms.uTime.value += rdt;
   if (mode === 'menu' || !race) {
     menuA += rdt * 0.25;
-    if (displayShip) { displayShip.rotation.y += rdt * 0.4; displayShip.position.y = hangarPos.y + Math.sin(menuA * 3) * 0.6; updateShipFx(displayShip, menuA * 4, 0.8); }
-    camera.position.copy(hangarPos).add(tv.set(Math.cos(menuA) * 27, 10 + Math.sin(menuA * 0.7) * 2.5, Math.sin(menuA) * 27));
-    camera.up.set(0, 1, 0); camera.lookAt(tv2.copy(hangarPos).add(new THREE.Vector3(innerWidth > 760 ? 0 : 0, 1, 0)));
-    camera.fov = 50; camera.updateProjectionMatrix();
+    if (displayShip) { displayShip.position.y = hangarPos.y + Math.sin(menuA * 3) * 0.4; updateShipFx(displayShip, menuA * 4, 0.8); }
+    menuCamera(rdt);
+    // softer exposure and bloom in the hangar so the paint stays readable against the bright desert
+    renderer.toneMappingExposure = 0.82; bloom.strength = GFX[S.gfx].bloom * 0.35; bloom.threshold = 0.93;
     W.update(rdt, FAR, false, hangarPos);
     if (fx) fx.update(rdt);
-    cinema.uniforms.uDesat.value = 0; cinema.uniforms.uAberr.value = 0.002; cinema.uniforms.uRed.value = 0; cinema.uniforms.uBlur.value = 0; cinema.uniforms.uEmp.value = 0;
+    cinema.uniforms.uDesat.value = 0; cinema.uniforms.uAberr.value = 0.001; cinema.uniforms.uRed.value = 0; cinema.uniforms.uBlur.value = 0; cinema.uniforms.uEmp.value = 0;
     composer.render();
     return;
+  }
+  if (camera.view && camera.view.enabled) camera.clearViewOffset();
+  renderer.toneMappingExposure = 1.0; bloom.strength = GFX[S.gfx].bloom; bloom.threshold = 0.82;
+  if (mode === 'race' && paused) {
+    const gp = navigator.getGamepads ? [...navigator.getGamepads()].find(g => g) : null;
+    const st = gp && gp.buttons[9] && gp.buttons[9].pressed;
+    if (st && !padPrev[9]) togglePause(false);
+    if (gp) padPrev[9] = st;
   }
   if (mode === 'race' && !paused) {
     // slow-mo (real-time driven)
@@ -750,5 +884,5 @@ function loop() {
   composer.render();
 }
 
-window.__rr = { get race() { return race; }, get fx() { return fx; }, camera, scene, startRace };
+window.__rr = { get race() { return race; }, get fx() { return fx; }, camera, scene, startRace, renderNow: () => { if (mode === 'menu') menuCamera(0.016); composer.render(); return renderer.info.programs.length; } };
 boot().catch(e => { console.error(e); $('loadtext').textContent = 'Ошибка загрузки: ' + e.message; });

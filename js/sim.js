@@ -1,5 +1,5 @@
 // Race simulation (DOM-free, fixed 60 Hz). Racers, weapons, items, obstacles, AI.
-import { TRACK, FEATURES, bounds, wrapS, idx, frameAt, newFrame, typeAt } from './track.js';
+import { TRACK, FEATURES, bounds, wrapS, idx, frameAt, newFrame, typeAt, ridgeAt } from './track.js';
 import { RACE, SHIPS, LASERS, MISSILES, ITEMS, AI_LEVELS, AI_NAMES, SHIP_LIVERIES } from './config.js';
 import { clamp } from './noise.js';
 
@@ -48,7 +48,8 @@ export class Race {
       r.dist = -slot * 22; r.x = (slot % 2 ? 1 : -1) * 22 + (slot - 2) * 2; r.y = (slot % 3) * 6;
       this.racers[gi] = r;
     });
-    this.pickups = FEATURES.pickups.map(p => ({ ...p, active: true, t: 0, item: Math.floor(R() * ITEMS.length) }));
+    this.pickups = FEATURES.pickups.map(p => ({ ...p, active: true, t: 0, item: 0 }));
+    this.dealItems();
     this.spires = FEATURES.spires;
     for (const sp of this.spires) sp.alive = true;
     this.player = this.racers[0];
@@ -91,13 +92,14 @@ export class Race {
     r.abilityCd = Math.max(0, r.abilityCd - dt); r.abilityT = Math.max(0, r.abilityT - dt);
     if (r.abilityT <= 0) r.dome = 0;
     if (r.dead) {
-      r.respawnT -= dt; r.speed = 0;
+      r.respawnT -= dt; r.speed = 0; r.input.ability = false; r.input.item = false; r.input.missile = false;
       if (r.respawnT <= 0) {
         // roll back up to 250 m, but never behind the start of the current lap
         const lapStart = Math.max(0, Math.floor(r.dist / L) * L);
         r.dead = false; r.dist = Math.max(Math.min(r.dist, lapStart), r.dist - RACE.rollback); r.x = 0; r.y = 0; r.vx = r.vy = 0;
         r.holoTrail.length = 0;
         const b = bounds(wrapS(r.dist)); r.y = clamp(0, b.yMin + 10, b.yMax - 10);
+        const rw0 = Math.max(ridgeAt(wrapS(r.dist)), ridgeAt(wrapS(r.dist) + 60)); if (rw0 > 0) r.x = (r.id % 2 ? 1 : -1) * (rw0 + 22);
         r.hp = r.maxHp; r.shield = 0; r.heat = 0; r.protect = RACE.protect; r.speed = r.def.cruise * 0.6;
         this.emit({ type: 'respawn', r: r.id });
       }
@@ -111,6 +113,14 @@ export class Race {
       target *= 1 + clamp(gap / 600, -1, 1) * r.ai.rubber;
     }
     if (inp.brake) target *= 0.62;
+    // slipstream: tucked in 10-70 m behind a rival gives +12 % (KESTREL's dash also cuts through it)
+    r.draft = false;
+    for (const o of this.racers) {
+      if (o === r || o.dead) continue;
+      const d = o.dist - r.dist;
+      if (d > 10 && d < 70 && Math.abs(o.x - r.x) < 8 && Math.abs(o.y - r.y) < 6) { r.draft = true; break; }
+    }
+    if (r.draft) target *= 1.12;
     if (F.boost > 0) target = Math.max(target, def.top * 1.5);
     if (F.dash > 0) target = Math.max(target, def.top * 1.6);
     if (F.ring > 0) target = Math.max(target, def.top * 1.3);
@@ -142,6 +152,9 @@ export class Race {
       if (r.y < b.yMin) { r.y = b.yMin; ny = 1; scraped = true; r.vy = Math.max(r.vy, 6); }
       if (r.y > b.yMax - 3) { r.y = b.yMax - 3; ny = -1; r.vy = Math.min(r.vy, -6); if (!b.tunnel) this.emit({ type: 'ceiling', r: r.id, s, x: r.x, y: r.y }); }
     }
+    // the split ridge in the middle of the canyon is solid rock
+    const rw = ridgeAt(s);
+    if (rw > 0 && Math.abs(r.x) < rw + 4) { const sg = Math.sign(r.x) || (r.id % 2 ? 1 : -1); r.x = sg * (rw + 4); r.vx = sg * Math.max(Math.abs(r.vx), 6); nx = sg; scraped = true; }
     if (scraped && F.phase <= 0) {
       r.scrape += dt; this.damage(r, RACE.wallDamage * dt, null, 'wall'); r.speed *= 1 - 0.6 * dt;
       if (r.scrape > 0.08) { r.scrape = 0; this.emit({ type: 'scrape', r: r.id, s, x: r.x - nx * 3, y: r.y - ny * 3, nx, ny }); }
@@ -242,11 +255,13 @@ export class Race {
     if (r.dome > 0 && r.abilityT > 0) { const ab = Math.min(r.dome, amt); r.dome -= ab; amt -= ab; }
     if (r.shield > 0) { const ab = Math.min(r.shield, amt); r.shield -= ab; amt -= ab; }
     if (amt <= 0) return;
+    if (src && src.ai && src !== r && !src.human) amt *= src.ai.dmg ?? 1; // easier levels hit softer
     r.hp -= amt; r.hitFlash = 1;
-    if (src) r.lastHitBy = src.id;
+    if (src) { r.lastHitBy = src.id; r.lastHitT = this.time; }
     if (r.hp <= 0) {
       r.dead = true; r.deaths++; r.respawnT = RACE.respawnDelay; r.item = -1; r.fx.nova = 0; r.fx.drones = 0;
-      const killer = src || (r.lastHitBy != null ? this.racers[r.lastHitBy] : null);
+      const recent = r.lastHitBy != null && this.time - (r.lastHitT ?? -99) < 6;
+      const killer = src || (recent ? this.racers[r.lastHitBy] : null);
       if (killer && killer !== r) killer.kills++;
       this.emit({ type: 'kill', victim: r.id, killer: killer ? killer.id : -1, s: wrapS(r.dist), x: r.x, y: r.y, kind });
     }
@@ -344,7 +359,7 @@ export class Race {
     if (inp.missile && canFire && r.ammo > 0 && r.fireCdM <= 0) {
       inp.missile = false; r.ammo--; r.fireCdM = 0.6;
       const M = r.missileDef;
-      const tgt = M.lock && r.lockTarget >= 0 ? r.lockTarget : -1;
+      const tgt = M.lock && r.lockTarget >= 0 && r.lockT > 0.6 ? r.lockTarget : -1;
       for (let k = 0; k < M.count; k++) {
         const id = NEXT_ID++;
         if (M.mine) {
@@ -364,7 +379,7 @@ export class Race {
       for (const o of this.racers) {
         if (o === r || o.dead) continue;
         const d = dS(wrapS(o.dist), s);
-        if (d > 0 && d < reach && Math.abs(o.x - r.x) < 34 && Math.abs(o.y - r.y) < 30) { this.damage(o, 85 * dt, r, 'nova'); if (R() < dt * 15) this.emit({ type: 'hit', s: wrapS(o.dist), x: o.x, y: o.y, color: '#ff3050', big: true, v: o.id }); }
+        if (d > 0 && d < reach && Math.abs(o.x - r.x) < 22 && Math.abs(o.y - r.y) < 18) { this.damage(o, 48 * dt, r, 'nova'); if (R() < dt * 15) this.emit({ type: 'hit', s: wrapS(o.dist), x: o.x, y: o.y, color: '#ff3050', big: true, v: o.id }); }
       }
       for (const sp of this.spires) if (sp.alive) { const d = dS(sp.s, s); if (d > 0 && d < reach && Math.abs(sp.x - r.x) < 34) { sp.alive = false; this.emit({ type: 'shatter', sp: sp.id }); } }
     }
@@ -388,7 +403,7 @@ export class Race {
     // march forward until the corridor ends (wall/arch)
     for (let d = 10; d < range; d += 20) {
       const b = bounds(wrapS(s + d));
-      if (b.tunnel ? Math.hypot(x, y) > b.hw : (Math.abs(x) > b.hw || y < b.yMin || y > b.yMax)) return { s: wrapS(s + d), x, y, wall: true };
+      if ((b.tunnel ? Math.hypot(x, y) > b.hw : (Math.abs(x) > b.hw || y < b.yMin || y > b.yMax)) || Math.abs(x) < ridgeAt(wrapS(s + d))) return { s: wrapS(s + d), x, y, wall: true };
     }
     return { s: wrapS(s + range), x, y, wall: false };
   }
@@ -412,7 +427,7 @@ export class Race {
       }
       if (hit) continue;
       const bd = bounds(b.s);
-      const out = bd.tunnel ? Math.hypot(b.x, b.y) > bd.hw + 4 : (Math.abs(b.x) > bd.hw + 8 || b.y < bd.yMin - 4);
+      const out = (bd.tunnel ? Math.hypot(b.x, b.y) > bd.hw + 4 : (Math.abs(b.x) > bd.hw + 8 || b.y < bd.yMin - 4)) || Math.abs(b.x) < ridgeAt(b.s);
       if (out) {
         let nx = 0, ny = 0;
         if (bd.tunnel) { const rr = Math.hypot(b.x, b.y); nx = -b.x / rr; ny = -b.y / rr; } else if (b.y < bd.yMin - 4) ny = 1; else nx = -Math.sign(b.x);
@@ -475,6 +490,7 @@ export class Race {
       }
       const b = bounds(m.s);
       if (!boom && (b.tunnel ? Math.hypot(m.x, m.y) > b.hw - 2 : (Math.abs(m.x) > b.hw + 6 || m.y < b.yMin - 3))) boom = true;
+      if (!boom && Math.abs(m.x) < ridgeAt(m.s)) boom = true;
       if (!boom) for (const sp of this.spires) { if (sp.alive && Math.abs(dS(sp.s, m.s)) < sp.radius + 3 && Math.abs(sp.x - m.x) < sp.radius + 2 && m.y < sp.topY) { boom = true; break; } }
       if (!boom) for (const a of FEATURES.arches) { if (Math.abs(dS(m.s, a.s)) < a.thick && Math.abs(Math.hypot(m.x, m.y - a.yc) - a.Ra) < a.thick) { boom = true; break; } }
       if (boom) { this.explode(m, m.s, m.x, m.y); continue; }
@@ -485,7 +501,7 @@ export class Race {
 
   updatePickups(dt) {
     for (const p of this.pickups) {
-      if (!p.active) { p.t -= dt; if (p.t <= 0) { p.active = true; p.item = Math.floor(R() * ITEMS.length); } continue; }
+      if (!p.active) { p.t -= dt; if (p.t <= 0) { p.active = true; p.item = this.freshItem(p); } continue; }
       for (const r of this.racers) {
         if (r.dead || r.item >= 0 || r.protect > 0) continue;
         const d = dS(wrapS(r.dist), p.s);
@@ -494,7 +510,7 @@ export class Race {
           if (r.taken.has(key)) continue; // one pickup per group per lap
           r.taken.add(key);
           p.active = false; p.t = RACE.pickupRespawn;
-          r.item = this.rollItem(r);
+          r.item = p.item; // a case gives exactly the item it shows
           this.emit({ type: 'pickup', r: r.id, item: r.item, s: p.s, x: p.x, y: p.y });
           break;
         }
@@ -504,16 +520,19 @@ export class Race {
   // lap index + group; the lap is taken from the case position so a respawn rollback can't reset it
   groupKey(r, p) { const lap = Math.floor((r.dist - dS(wrapS(r.dist), p.s)) / L + 1e-6); return lap * 64 + p.group; }
   canTake(r, p) { return !r.taken.has(this.groupKey(r, p)); }
-  rollItem(r) {
-    // catch-up weighting: trailing racers get stronger items
-    const w = ITEMS.map(it => 1);
-    const back = (r.place - 1) / 4;
-    const k = (key, v) => { w[ITEMS.findIndex(i => i.key === key)] = v; };
-    k('nova', 0.3 + back * 1.6); k('chrono', 0.4 + back * 1.4); k('magnet', back * 1.6 + 0.1); k('boost', 1 + back);
-    k('shield', 1.2 - back * 0.5); k('emp', 0.7 + back * 0.6);
-    let sum = w.reduce((a, b) => a + b, 0), x = R() * sum;
-    for (let i = 0; i < w.length; i++) { x -= w[i]; if (x <= 0) return i; }
-    return 0;
+  // every group of cases holds different items (all seven appear around a lap)
+  dealItems() {
+    const groups = {};
+    for (const p of this.pickups) (groups[p.group] ||= []).push(p);
+    for (const g of Object.values(groups)) {
+      const bag = ITEMS.map((_, i) => i).sort(() => R() - 0.5);
+      g.forEach((p, k) => { p.item = bag[k % bag.length]; });
+    }
+  }
+  freshItem(p) {
+    const used = new Set(this.pickups.filter(q => q.group === p.group && q !== p && q.active).map(q => q.item));
+    const free = ITEMS.map((_, i) => i).filter(i => !used.has(i));
+    return free[Math.floor(R() * free.length)] ?? Math.floor(R() * ITEMS.length);
   }
 
   useItem(r) {
@@ -564,7 +583,13 @@ export class Race {
       // pickups
       if (r.item < 0) {
         let best = null, bd = 1e9;
-        for (const p of this.pickups) { if (!p.active || !this.canTake(r, p)) continue; const d = dS(p.s, s); if (d > 30 && d < 260 && d < bd) { bd = d; best = p; } }
+        const back = r.place > 1, hurt = r.hp < r.maxHp * 0.6;
+        const want = { nova: back ? 3 : 1, chrono: back ? 2.5 : 0.5, emp: 2, boost: 2, shield: back ? 1 : 2.5, holo: back ? 1 : 2.5, repair: hurt ? 3.5 : 0.4 };
+        for (const p of this.pickups) {
+          if (!p.active || !this.canTake(r, p)) continue; const d = dS(p.s, s);
+          const score = d - (want[ITEMS[p.item].key] || 1) * 25; // prefer the useful case of the nearest group
+          if (d > 30 && d < 260 && score < bd) { bd = score; best = p; }
+        }
         if (best && R() < 0.4 + A.line * 0.5) { tx = best.x; ty = best.y; }
       }
       // chase target to shoot
@@ -574,6 +599,7 @@ export class Race {
       const threat = this.missiles.some(m => m.target === r.id && Math.abs(dS(m.s, s)) < 220);
       if (threat) { tx = r.x + Math.sign(Math.sin(this.time * 2 + A.jink)) * 40; ty = r.y + Math.sign(Math.cos(this.time * 2.3 + A.jink)) * 20; }
       A.tx = tx; A.ty = ty; A.threat = threat; A.tgt = tgt ? tgt.id : -1;
+      A.railHold = !!tgt && R() < 0.25 + A.aggro * 0.55;
     }
     let tx = A.tx, ty = A.ty;
     // obstacle avoidance (always reactive)
@@ -586,6 +612,8 @@ export class Race {
     for (const rib of FEATURES.ribs) { const d = dS(rib.s, s); if (d > -5 && d < 160) { ty = Math.min(ty, rib.floor + rib.r - 26 - cy); tx = clamp(tx, -rib.r * 0.5, rib.r * 0.5); } }
     const bb = bounds(s + 40);
     tx = clamp(tx, -bb.hw + 12, bb.hw - 12); ty = clamp(ty, bb.yMin + 8, bb.yMax - 12);
+    const rwA = Math.max(ridgeAt(s + 40), ridgeAt(s + 120), ridgeAt(s + 220));
+    if (rwA > 0 && Math.abs(tx) < rwA + 16) tx = (Math.sign(r.x) || (r.id % 2 ? 1 : -1)) * (rwA + 24); // pick a lane early
     if (bb.tunnel) { const rr = Math.hypot(tx, ty), m = bb.hw - 16; if (rr > m) { tx *= m / rr; ty *= m / rr; } }
     inp.steer = clamp((tx - r.x) / 14 - r.vx * 0.02, -1, 1);
     inp.climb = clamp((ty - r.y) / 10 - r.vy * 0.02, -1, 1);
@@ -593,8 +621,9 @@ export class Race {
     // fire control
     const tgt = A.tgt >= 0 ? this.racers[A.tgt] : null;
     const heatOk = r.heat < 80 || r.fx.overload > 0;
-    inp.fire = !!tgt && !tgt.dead && heatOk && R() < 0.4 + A.aggro * 0.6;
-    if (r.laser.rail && tgt) inp.fire = true;
+    A.burst = (A.burst || 0) - dt; if (A.burst < -1.6 * (1.2 - A.aggro)) A.burst = 0.6 + A.aggro * 1.6; // fire in bursts, calmer AI rests longer
+    inp.fire = !!tgt && !tgt.dead && heatOk && A.burst > 0 && R() < 0.3 + A.aggro * 0.7;
+    if (r.laser.rail) inp.fire = !!tgt && A.railHold;
     if (r.lockTarget >= 0 && r.lockT > 0.6 && r.ammo > 0 && R() < dt * (0.25 + A.aggro * 0.9)) inp.missile = true;
     if (r.missileDef.mine && R() < dt * 0.15 * A.aggro && r.place <= 3) inp.missile = true;
     // items

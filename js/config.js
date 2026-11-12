@@ -93,25 +93,23 @@ export const MISSILES = [
   { key: 'mine', name: 'МИНА-ШЛЕЙФ', desc: 'Сбрасывает 3 мины позади. Для лидеров гонки.', color: '#ff2fb0', count: 3, dmg: 30, speed: 0, ammo: 3, regen: 9, mine: true, radius: 22 },
 ];
 
-// Flying cases (one slot, E to use)
+// Flying cases (one slot, E to use) — the seven from the spec, art in js/icons.js after the pickup reference sheet.
+// Each case shows its item and gives exactly that item; a group of cases holds different items.
 export const ITEMS = [
-  { key: 'boost', name: 'ФОРСАЖ', color: '#29f3ff', icon: '»', desc: 'Скорость ×1.55 на 3 с' },
-  { key: 'chrono', name: 'ХРОНОПОЛЕ', color: '#a05cff', icon: '◷', desc: 'Замедляет всех впереди в радиусе 320 м' },
-  { key: 'nova', name: 'СВЕРХНОВАЯ', color: '#ff3050', icon: '✸', desc: 'Супероружие: испепеляющий луч на 2.5 с' },
-  { key: 'shield', name: 'ЩИТ', color: '#4cf0ff', icon: '⬡', desc: 'Щит на 60 урона' },
-  { key: 'repair', name: 'РЕМКОМПЛЕКТ', color: '#00ff9c', icon: '+', desc: '+50 брони' },
-  { key: 'emp', name: 'ЭМИ', color: '#ffe600', icon: 'ϟ', desc: 'Глушит оружие соперников рядом на 3.5 с' },
-  { key: 'drones', name: 'РОЙ ДРОНОВ', color: '#ff8a1e', icon: '⁂', desc: '3 дрона-охотника атакуют 7 с' },
-  { key: 'phase', name: 'ФАЗА', color: '#ffffff', icon: '◌', desc: 'Неуязвимость и полёт сквозь препятствия 2.5 с' },
-  { key: 'holo', name: 'ГОЛО-СЛЕД', color: '#7dfcff', icon: '≋', desc: 'Голографический след 5 с: ракеты бьют в фантомов, лазеры мажут' },
-  { key: 'magnet', name: 'ГРАВИТРОС', color: '#ff2fd0', icon: '⟿', desc: 'Притягивает к лидеру и даёт тягу 4 с' },
+  { key: 'boost', name: 'УСКОРИТЕЛЬ', color: '#29f3ff', desc: 'Скорость ×1.5 на 3 с' },
+  { key: 'chrono', name: 'ТОРМОЗНОЕ ПОЛЕ', color: '#a05cff', desc: 'Замедляет соперников впереди (до 320 м) на 3 с' },
+  { key: 'nova', name: 'NOVA', color: '#ffc24a', desc: 'Сверхлуч вперёд на 2.5 с — до 120 урона и рушит скалы' },
+  { key: 'shield', name: 'ЩИТ', color: '#3d8bff', desc: 'Поглощает 60 урона' },
+  { key: 'repair', name: 'РЕМКОМПЛЕКТ', color: '#8dff2a', desc: 'Сразу +50 брони' },
+  { key: 'holo', name: 'ГОЛО-СЛЕД', color: '#ff4fd8', desc: '5 с: ракеты бьют в фантомов за вами, лазеры мажут' },
+  { key: 'emp', name: 'ЭМИ', color: '#e6f2ff', desc: 'Глушит оружие и щиты соперников рядом (300 м) на 3.5 с' },
 ];
 
 export const AI_LEVELS = [
-  { key: 'rookie', name: 'НОВИЧОК', speed: 0.9, aim: 0.35, react: 0.9, aggro: 0.35, line: 0.5, rubber: 0.06 },
-  { key: 'pilot', name: 'ПИЛОТ', speed: 0.96, aim: 0.6, react: 0.55, aggro: 0.6, line: 0.75, rubber: 0.05 },
-  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04 },
-  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03 },
+  { key: 'rookie', name: 'НОВИЧОК', speed: 0.9, aim: 0.3, react: 0.9, aggro: 0.3, line: 0.5, rubber: 0.06, dmg: 0.35 },
+  { key: 'pilot', name: 'ПИЛОТ', speed: 0.96, aim: 0.55, react: 0.55, aggro: 0.55, line: 0.75, rubber: 0.05, dmg: 0.6 },
+  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04, dmg: 0.85 },
+  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03, dmg: 1.0 },
 ];
 
 export const AI_NAMES = ['ВЕКТОР', 'ГАДЮКА', 'ТУМАН', 'ФЕНИКС', 'КОБРА', 'ОРИОН', 'РАЗРЯД', 'СТРИЖ'];

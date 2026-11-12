@@ -2,7 +2,7 @@
 // cliff exit, stone arches, destructible spires, flagship wreck, force fields, neon guides, sky.
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as THREE from 'three';
-import { S, TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
+import { S, ridgeAt, TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
 import { fbm, ridged, noise2, smooth, lerp, clamp, rng } from './noise.js';
 import { makeRockMaterial, forceFieldMaterial, softTex, smokeTex } from './shaders.js';
 import { buildCapitalFleet } from './capital.js';
@@ -40,6 +40,7 @@ function computeHeightfield() {
   const T = TRACK, N = G + 1, cell = (HALF * 2) / G;
   const nd = new Float32Array(N * N).fill(1e12), ni = new Int32Array(N * N).fill(-1);
   const td = new Float32Array(N * N).fill(1e12);
+  const ndN = new Float32Array(N * N).fill(1e12), niN = new Int32Array(N * N).fill(-1); // nearest open-air (non-tunnel) sample
   const R = 560, rc = Math.ceil(R / cell);
   const isTun = TYPE_NAMES.indexOf('tunnel');
   for (let i = 0; i < T.n; i += 3) {
@@ -56,6 +57,7 @@ function computeHeightfield() {
         const k = zz * N + xx;
         if (d2 < nd[k]) { nd[k] = d2; ni[k] = i; }
         if (tun && d2 < td[k]) td[k] = d2;
+        if (!tun && d2 < ndN[k]) { ndN[k] = d2; niN[k] = i; }
       }
     }
   }
@@ -89,6 +91,12 @@ function computeHeightfield() {
         const jag = ridged(x * 0.02, z * 0.02, 3) * 18 * t * (1 - t) * 4;
         h = F + fn * 2.5 + (wallTop - F) * t + jag;
         if (t > 0.02) h = terrace(h, 22);
+        // the split: a rock ridge down the middle divides the canyon into two lanes
+        const rw = ty === 'split' ? ridgeAt(i * T.ds) : 0;
+        if (rw > 0) {
+          const top = F + 150 + 50 * fbm(x * 0.004 + 3, z * 0.004, 3) + ridged(x * 0.02, z * 0.02, 2) * 14;
+          h = Math.max(h, lerp(h, terrace(top, 22), smooth(rw + 4, rw - 16, d)));
+        }
       }
     }
     // mountain over the tunnel, sliced by the two portal planes (gives a sheer cliff at the exit)
@@ -96,11 +104,18 @@ function computeHeightfield() {
       const dT = Math.sqrt(td[k]);
       const ea = (x - fa.p.x) * fa.t.x + (z - fa.p.z) * fa.t.z;
       const eb = (x - fb.p.x) * fb.t.x + (z - fb.p.z) * fb.t.z;
-      if (ea > -4 && eb < 0) {
+      const nearOpen = niN[k] >= 0 && Math.sqrt(ndN[k]) < T.hw[niN[k]] + 90; // never bury another part of the course
+      if (ea > -4 && eb < 0 && !nearOpen) {
         const m = 1 - smooth(330, 540, dT);
         const top = 440 + 110 * fbm(x * 0.002, z * 0.002, 4) + ridged(x * 0.008, z * 0.008) * 40;
         h = Math.max(h, lerp(h, terrace(top, 30), m));
       }
+    }
+    // nothing may rise into the flight corridor (except the split ridge)
+    const io = niN[k];
+    if (io >= 0) {
+      const dO = Math.sqrt(ndN[k]), rw = TYPE_NAMES[T.type[io]] === 'split' ? ridgeAt(io * T.ds) : 0;
+      if (dO < T.hw[io] + 2 && !(rw > 0 && dO < rw + 4)) h = Math.min(h, T.floorY[io] + 3);
     }
     H[k] = h;
   }
@@ -206,7 +221,7 @@ function buildTunnel(group) {
   // portal frames
   for (const s of [t0, t1]) {
     frameAt(s, f);
-    const fr = new THREE.Mesh(new THREE.TorusGeometry(R0 + 2, 2.2, 8, 72), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3a6a).multiplyScalar(4) }));
+    const fr = new THREE.Mesh(new THREE.TorusGeometry(R0 + 2, 1.1, 8, 72), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3a6a).multiplyScalar(1.7) }));
     fr.position.copy(f.p); fr.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(f.r, f.u, f.t.clone().negate()));
     group.add(fr);
     const outer = new THREE.Mesh(new THREE.TorusGeometry(R0 + 9, 4, 6, 8), new THREE.MeshStandardMaterial({ color: 0x2a2d35, metalness: 0.8, roughness: 0.4 }));
@@ -278,6 +293,8 @@ function buildSpires(group, rockMat) {
 
 function buildRocks(group, rockMat) {
   const r = rng(5);
+  const probe = []; for (let i = 0; i < TRACK.n; i += 5) if (TYPE_NAMES[TRACK.type[i]] !== 'tunnel') probe.push(i);
+  const clear = (x, z, rad) => { for (const i of probe) { const dx = x - TRACK.px[i], dz = z - TRACK.pz[i], m = TRACK.hw[i] + rad + 6; if (dx * dx + dz * dz < m * m) return false; } return true; };
   const geos = [0, 1, 2].map(k => { let g = mergeVertices(new THREE.IcosahedronGeometry(1, 3)); return displaceGeo(g, 0.35, 1.3, k * 10); });
   const per = 900;
   const inst = geos.map(g => new THREE.InstancedMesh(g, rockMat, per));
@@ -287,9 +304,10 @@ function buildRocks(group, rockMat) {
     const s = r() * TRACK.length; const b = bounds(s);
     if (b.tunnel) continue;
     const side = r() < 0.5 ? -1 : 1;
-    const x = side * (b.hw + 4 + r() * (SECTOR_INFO[b.type].open ? 260 : 40));
-    const w = toWorld(s, x, 0); const h = heightAt(w.x, w.z);
     const sc = 1.5 + Math.pow(r(), 3) * (SECTOR_INFO[b.type].open ? 22 : 12);
+    const x = side * (b.hw + 6 + sc * 1.2 + r() * (SECTOR_INFO[b.type].open ? 260 : 40));
+    const w = toWorld(s, x, 0); const h = heightAt(w.x, w.z);
+    if (!clear(w.x, w.z, sc * 1.2)) continue;
     const k = n % 3; if (cnt[k] >= per) continue;
     e.set(r() * 6, r() * 6, r() * 6); q.setFromEuler(e);
     m4.compose(new THREE.Vector3(w.x, h + sc * 0.2, w.z), q, new THREE.Vector3(sc, sc * (0.6 + r() * 0.5), sc));
@@ -428,7 +446,7 @@ function buildStartGate(group) {
   for (const side of [-1, 1]) {
     const py = new THREE.Mesh(new THREE.BoxGeometry(10, h - b.yMin + 30, 10), metal);
     py.position.set(side * hw, (h + b.yMin - 30) / 2, 0); g.add(py);
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(1.2, h - b.yMin + 20, 1.2), new THREE.MeshBasicMaterial({ color: new THREE.Color(side < 0 ? 0xff2fb0 : 0x24f2ff).multiplyScalar(4) }));
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(1.2, h - b.yMin + 20, 1.2), new THREE.MeshBasicMaterial({ color: new THREE.Color(side < 0 ? 0xff2fb0 : 0x24f2ff).multiplyScalar(1.6) }));
     strip.position.set(side * (hw - 5.6), (h + b.yMin - 30) / 2, 5.2); g.add(strip);
   }
   const beam = new THREE.Mesh(new THREE.BoxGeometry(hw * 2 + 10, 12, 10), metal); beam.position.y = h; g.add(beam);

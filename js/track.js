@@ -3,27 +3,37 @@
 import * as THREE from 'three';
 import { rng, clamp } from './noise.js';
 
-export const S = 2.33; // map scale: gives an ~18 km lap
+export const S = 2.17; // map scale: gives an ~18 km lap
 // x, z, centreY, halfWidth, halfHeight, sector
 const RAW = [
   [0, -1100, 300, 95, 70, 'start'],
-  [500, -1060, 296, 95, 70, 'start'],
-  [900, -820, 250, 72, 70, 'canyon'],
-  [1160, -460, 205, 62, 66, 'canyon'],
-  [990, -110, 182, 66, 66, 'canyon'],
-  [1210, 210, 172, 82, 70, 'arches'],
-  [1120, 560, 178, 78, 70, 'arches'],
-  [820, 820, 200, 46, 40, 'tunnel'],
+  [450, -1080, 296, 95, 70, 'start'],
+  [800, -900, 262, 70, 68, 'canyon'],
+  [1000, -650, 232, 58, 66, 'canyon'],
+  [1240, -470, 214, 60, 66, 'canyon'],
+  [1080, -260, 198, 58, 66, 'canyon'],
+  [1260, -40, 186, 64, 66, 'canyon'],
+  [1150, 200, 176, 82, 70, 'arches'],
+  [1260, 430, 178, 78, 70, 'arches'],
+  [1080, 640, 190, 78, 70, 'arches'],
+  [820, 830, 202, 46, 40, 'tunnel'],
   [450, 1010, 208, 46, 40, 'tunnel'],
-  [110, 1110, 214, 46, 40, 'cliff'],
-  [-260, 1160, 120, 150, 150, 'wreck'],
-  [-620, 1060, 66, 150, 90, 'wreck'],
-  [-920, 760, 60, 140, 90, 'dunes'],
-  [-1160, 360, 58, 130, 60, 'dunes'],
-  [-1110, -50, 66, 120, 60, 'climb'],
-  [-1260, -450, 150, 80, 70, 'climb'],
-  [-910, -720, 238, 84, 70, 'start'],
-  [-500, -1010, 292, 95, 70, 'start'],
+  [140, 1100, 212, 46, 40, 'tunnel'],
+  // out of the mountain straight into a narrow gorge that drops ~170 m
+  [-120, 1180, 150, 44, 62, 'gorge'],
+  [-330, 1140, 72, 40, 70, 'gorge'],
+  [-560, 1210, 40, 150, 120, 'wreck'],
+  [-800, 1040, 50, 150, 90, 'wreck'],
+  // wide canyon split by a rock ridge: two lanes, pick one
+  [-930, 780, 56, 150, 80, 'split'],
+  [-1120, 520, 58, 150, 80, 'split'],
+  [-1180, 260, 60, 130, 60, 'dunes'],
+  [-1060, 40, 66, 110, 60, 'climb'],
+  [-1240, -200, 110, 80, 70, 'climb'],
+  [-1060, -420, 170, 80, 70, 'climb'],
+  [-1210, -640, 220, 84, 70, 'climb'],
+  [-880, -830, 262, 90, 70, 'start'],
+  [-460, -1030, 292, 95, 70, 'start'],
 ];
 
 export const SECTOR_INFO = {
@@ -31,8 +41,9 @@ export const SECTOR_INFO = {
   canyon: { name: 'КРАСНЫЙ КАНЬОН', open: false },
   arches: { name: 'КАМЕННЫЕ АРКИ', open: false },
   tunnel: { name: 'ТОННЕЛЬ «ГОРЛО»', open: false },
-  cliff: { name: 'ОБРЫВ «ПРЫЖОК»', open: true },
+  gorge: { name: 'УЩЕЛЬЕ «ПРОВАЛ»', open: false },
   wreck: { name: 'ДОЛИНА ФЛАГМАНА', open: true },
+  split: { name: 'РАЗВИЛКА «КЛЫКИ»', open: false },
   dunes: { name: 'ДЮННОЕ МОРЕ', open: true },
   climb: { name: 'СЕРПАНТИН', open: false },
 };
@@ -82,8 +93,7 @@ function buildTrack() {
     T.type[i] = TYPES.indexOf(a[5]);
     if (lt * N < 1e-9 || (i > 0 && Math.floor(((k + f - 0.0001) / M) * N) !== seg)) ctrlS[seg] = target;
     let floor = p.y - vh - 6;
-    if (a[5] === 'cliff' || a[5] === 'wreck' || a[5] === 'dunes') floor = Math.max(VALLEY_FLOOR, Math.min(floor, VALLEY_FLOOR + 30));
-    if (a[5] === 'cliff') floor = VALLEY_FLOOR;
+    if (a[5] === 'wreck' || a[5] === 'dunes' || a[5] === 'split') floor = Math.max(VALLEY_FLOOR, Math.min(floor, VALLEY_FLOOR + 30));
     T.floorY[i] = floor;
     T.ceilY[i] = p.y + vh * 1.5;
   }
@@ -165,6 +175,7 @@ export const RANGES = Object.fromEntries(TYPES.map(t => [t, range(t)]));
 // start sector wraps around s=0; real start line at s=0
 RANGES.tunnel = range('tunnel');
 
+let RIDGE = null;
 function buildFeatures() {
   const r = rng(77);
   const F = { arches: [], spires: [], ribs: [], pickups: [], checkpoints: [], boostRings: [] };
@@ -200,13 +211,17 @@ function buildFeatures() {
       F.pickups.push({ s, x, y, group: g, id: F.pickups.length });
     }
   }
-  // dive column over the cliff
-  const [c0] = RANGES.cliff;
+  // dive column down the gorge after the tunnel
+  const [c0] = RANGES.gorge;
   for (let k = 0; k < 4; k++) {
-    const s = c0 + 120 + k * 110;
-    const cy = TRACK.py[idx(s)];
-    F.pickups.push({ s, x: 0, y: (VALLEY_FLOOR + 40 + (3 - k) * 30) - cy + 60 - k * 25, group: 9, id: F.pickups.length });
+    const s = c0 + 160 + k * 170;
+    F.pickups.push({ s, x: (k % 2 ? 1 : -1) * 10, y: bounds(s).yMin + 22 + (k % 2) * 10, group: 9, id: F.pickups.length });
   }
+  // the split: a lens-shaped rock ridge down the middle of the 'split' sector
+  const [p0, p1] = RANGES.split;
+  RIDGE = F.ridge = { s0: p0 + 120, s1: p1 - 60, w: 36 };
+  // keep cases off the ridge
+  for (const pk of F.pickups) { const w = ridgeAt(pk.s); if (w > 0) pk.x = Math.sign(pk.x || (pk.id % 2 ? 1 : -1)) * (w + 18 + Math.abs(pk.x) * 0.4); }
   // checkpoints every ~1 km, passed in order; the last one is the start/finish line
   const nCp = Math.max(1, Math.round(L / 1000));
   for (let k = 1; k <= nCp; k++) F.checkpoints.push(k * L / nCp);
@@ -218,6 +233,12 @@ function buildFeatures() {
   return F;
 }
 export const FEATURES = buildFeatures();
+// half width of the central ridge at s (0 outside the split)
+export function ridgeAt(s) {
+  const R = RIDGE; if (!R) return 0;
+  const t = (wrapS(s) - R.s0) / (R.s1 - R.s0); if (t <= 0 || t >= 1) return 0;
+  return R.w * Math.pow(Math.sin(Math.PI * t), 0.55);
+}
 
 export function clampToBounds(s, x, y) {
   const b = bounds(s);

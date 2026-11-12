@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { softTex, smokeTex, beamMaterial } from './shaders.js';
 import { buildSpireGeometry } from './world.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { iconTexture } from './icons.js';
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 
@@ -326,19 +328,62 @@ export class FX {
   }
 }
 
-// Holographic flying case (pickup)
-export function buildCase(color) {
-  const g = new THREE.Group();
+// Flying case (pickup) after references/.../02_Seven_Flying_Pickups.png: a glass cube with armoured
+// corner brackets, neon edges, glowing emitters top and bottom and a holographic item icon inside.
+const CASE_SIZE = 5;
+let CASE_GEO = null;
+function caseGeometry() {
+  if (CASE_GEO) return CASE_GEO;
+  const S = CASE_SIZE, h = S / 2, dark = [], glow = [];
+  for (const x of [-h, h]) for (const y of [-h, h]) for (const z of [-h, h]) {
+    // chunky corner armour: plates meeting at the corner
+    dark.push(new THREE.BoxGeometry(1.25, 0.5, 1.25).translate(x * 0.93, y * 0.96, z * 0.93));
+    dark.push(new THREE.BoxGeometry(0.5, 1.2, 0.5).translate(x * 0.98, y * 0.8, z * 0.98));
+    glow.push(new THREE.BoxGeometry(0.1, 0.55, 0.1).translate(x * 1.06, y * 0.62, z * 0.86));
+  }
+  for (const a of [-h, h]) for (const b of [-h, h]) {
+    glow.push(new THREE.BoxGeometry(0.09, S * 0.7, 0.09).translate(a, 0, b));
+    glow.push(new THREE.BoxGeometry(S * 0.72, 0.07, 0.07).translate(0, a, b));
+    glow.push(new THREE.BoxGeometry(0.07, 0.07, S * 0.72).translate(a, b, 0));
+  }
+  for (const y of [-h, h]) {
+    dark.push(new THREE.CylinderGeometry(0.95, 1.1, 0.4, 24).translate(0, y * 0.86, 0));
+    glow.push(new THREE.TorusGeometry(0.62, 0.09, 8, 32).rotateX(Math.PI / 2).translate(0, y * 0.86 - Math.sign(y) * 0.22, 0));
+    glow.push(new THREE.CircleGeometry(0.45, 24).rotateX(y > 0 ? Math.PI / 2 : -Math.PI / 2).translate(0, y * 0.86 - Math.sign(y) * 0.21, 0));
+  }
+  CASE_GEO = { glass: new THREE.BoxGeometry(S * 0.98, S * 0.98, S * 0.98), dark: mergeGeometries(dark), glow: mergeGeometries(glow) };
+  return CASE_GEO;
+}
+const CASE_DARK = new THREE.MeshStandardMaterial({ color: 0x2a2d33, metalness: 0.85, roughness: 0.35 });
+const CASE_MATS = {};
+function caseMaterials(key, color) {
+  if (CASE_MATS[key]) return CASE_MATS[key];
   const c = new THREE.Color(color);
-  const core = new THREE.Mesh(new THREE.OctahedronGeometry(2.2, 0), new THREE.MeshPhysicalMaterial({ color: 0x0a0a12, metalness: 0.9, roughness: 0.15, emissive: c.clone().multiplyScalar(0.5), clearcoat: 1 }));
-  const frame = new THREE.Mesh(new THREE.OctahedronGeometry(3.3, 0), new THREE.MeshBasicMaterial({ color: c.clone().multiplyScalar(3), wireframe: true }));
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(4.6, 0.15, 6, 48), new THREE.MeshBasicMaterial({ color: c.clone().multiplyScalar(2.5) }));
-  ring.rotation.x = Math.PI / 2;
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex(), color: c, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.7 }));
-  halo.scale.setScalar(16);
-  g.add(core, frame, ring, halo);
-  g.userData = { core, frame, ring, halo };
+  return (CASE_MATS[key] = {
+    glass: new THREE.MeshPhysicalMaterial({ color: 0x0c1018, metalness: 0.2, roughness: 0.08, transparent: true, opacity: 0.42, depthWrite: false, side: THREE.DoubleSide, emissive: c.clone().multiplyScalar(0.06) }),
+    glow: new THREE.MeshBasicMaterial({ color: c.clone().multiplyScalar(1.15) }),
+    icon: new THREE.SpriteMaterial({ map: iconTexture(key, color), color: new THREE.Color(1.25, 1.25, 1.25), transparent: true, depthWrite: false }),
+    halo: new THREE.SpriteMaterial({ map: softTex(), color: c, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.32 }),
+  });
+}
+export function buildCase() {
+  const G = caseGeometry(), g = new THREE.Group();
+  const glass = new THREE.Mesh(G.glass), dark = new THREE.Mesh(G.dark, CASE_DARK), glow = new THREE.Mesh(G.glow);
+  const icon = new THREE.Sprite(); icon.scale.setScalar(3.6);
+  const halo = new THREE.Sprite(); halo.scale.setScalar(10);
+  dark.castShadow = true;
+  g.add(glass, dark, glow, halo, icon);
+  g.userData = { glass, glow, icon, halo, key: null, dim: null };
   return g;
+}
+// show item `key` (colour `color`) in case `c`; `dim` = this racer cannot take it on this lap
+export function setCase(c, key, color, dim = false) {
+  const u = c.userData;
+  if (u.key !== key) {
+    const M = caseMaterials(key, color);
+    u.glass.material = M.glass; u.glow.material = M.glow; u.icon.material = M.icon; u.halo.material = M.halo; u.key = key;
+  }
+  if (u.dim !== dim) { u.dim = dim; c.scale.setScalar(dim ? 0.55 : 1); u.halo.visible = !dim; u.glow.visible = !dim; }
 }
 
 // Boost ring

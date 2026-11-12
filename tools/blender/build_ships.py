@@ -152,7 +152,7 @@ def sec8(w, h, y=0.0, tw=0.5, bw=0.6, m=0.2):
     """chined octagon: (x, y) points counter-clockwise from the right side"""
     w = max(w, 0.003); h = max(h, 0.003)
     return [(w, y + m * h), (tw * w, y + h), (-tw * w, y + h), (-w, y + m * h), (-w, y - m * h), (-bw * w, y - h), (bw * w, y - h), (w, y - m * h)]
-def prism_bm(stations, off=(0, 0, 0), shape=None):
+def prism_bm(stations, off=(0, 0, 0), shape=None, caps=(True, True)):
     """faceted loft: stations (z, w, h, y=0, tw=.5, bw=.6, m=.2), straight segments between them"""
     bm = new_bm(); rings = []
     for st in stations:
@@ -163,12 +163,13 @@ def prism_bm(stations, off=(0, 0, 0), shape=None):
     for i in range(len(rings) - 1):
         for j in range(n):
             bm.faces.new((rings[i][j], rings[i + 1][j], rings[i + 1][(j + 1) % n], rings[i][(j + 1) % n]))
-    bm.faces.new(rings[0]); bm.faces.new(rings[-1][::-1])
+    if caps[0]: bm.faces.new(rings[0])
+    if caps[1]: bm.faces.new(rings[-1][::-1])
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0005)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return bm
-def prism(name, role, stations, off=(0, 0, 0), M=None, shape=None, bevel=0.0):
-    return emit(prism_bm(stations, off, shape), name, role, M, bevel)
+def prism(name, role, stations, off=(0, 0, 0), M=None, shape=None, bevel=0.0, caps=(True, True)):
+    return emit(prism_bm(stations, off, shape, caps), name, role, M, bevel)
 def oct_shape(w, h, y=0.0):
     return sec8(w, h, y, 0.42, 0.42, 0.42)
 def offset_poly(pts, d):
@@ -197,9 +198,10 @@ def plate_bm(outline, t=0.2, ch=0.06):
     bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 4], ngon_method='BEAUTY')
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return bm
-def plate(name, role, outline, t=0.2, ch=0.06, M=None, sym=True):
+def plate(name, role, outline, t=0.2, ch=0.06, M=None, sym=True, dih=0.0):
     for sd in ((1, -1) if sym else (1,)):
         bm = plate_bm(outline, t, ch)
+        if dih: bmesh.ops.transform(bm, matrix=R(z=dih), verts=bm.verts)
         if sd < 0: mirror_bm(bm)
         emit(bm, f'{name}{sd}', role, M.copy() if M is not None else None)
 def fin_plate(name, role, outline, x, y, side=1, cant=0.0, t=0.16, ch=0.05):
@@ -223,8 +225,8 @@ def decal_side(x, y, z, side, cant=0.0, s=1.0): decal((x, y, z), R(z=-side * can
 # ---------------- assemblies ----------------
 def engine(x, y, z, r, L, name='eng', ring=True):
     zb, zf = z - L / 2, z + L / 2
-    prism(name + '_nac', 'dark', [(zf, r * 0.95, r * 0.95), (zf - 0.2, r * 1.1, r * 1.1), (zb + 0.35, r * 1.12, r * 1.12), (zb, r * 1.04, r * 1.04)], (x, y, 0), shape=lambda w, h: [(math.cos(a) * w, math.sin(a) * h) for a in [k / 12 * math.tau for k in range(12)]])
-    if ring: emit(cyl(r * 1.16, r * 1.16, 0.2, 24), name + '_ring', 'neon', T(x, y, zb + 0.55))
+    prism(name + '_nac', 'dark', [(zf, r * 0.95, r * 0.95), (zf - 0.2, r * 1.1, r * 1.1), (zb + 0.35, r * 1.12, r * 1.12), (zb, r * 1.04, r * 1.04)], (x, y, 0), shape=lambda w, h: [(math.cos(a) * w, math.sin(a) * h) for a in [k / 12 * math.tau for k in range(12)]], caps=(True, False))
+    if ring: emit(cyl(r * 1.15, r * 1.15, 0.16, 24, caps=False), name + '_ring', 'neon', T(x, y, zb + 0.12))
     petals, pr, pl = 14, r * 0.97, r * 0.65
     for k in range(petals):
         a = k / petals * math.tau
@@ -267,13 +269,19 @@ def grille(x, y, z, w, h, n, role, axis='x', name='grille', depth=0.06):
         t = (k + 0.5) / n - 0.5
         if axis == 'x': emit(box(w, h / n * 0.45, depth), f'{name}{k}', role, T(x, y + t * h, z))
         else: emit(box(depth, h, w / n * 0.45), f'{name}{k}', role, T(x, y, z + t * w))
-def canopy(stations, bars=(), name='canopy', tw=0.45):
-    prism(name, 'glass', [(z, w, h, y, tw, 0.9, 0.1) for z, w, h, y in stations])
+def canopy(stations, bars=(), name='canopy', tw=0.45, tall=1.55, seat=True):
+    """faceted glass canopy; heights are scaled by `tall` so the glass stands proud like on the sheets"""
+    st = [(z, w, h * tall, y) for z, w, h, y in stations]
+    prism(name, 'glass', [(z, w, h, y, tw, 0.9, 0.1) for z, w, h, y in st])
     for sd in (1, -1):
-        pts = [V(sd * tw * w * 1.02, y + h + 0.01, z) for z, w, h, y in stations if w > 0.06]
-        if len(pts) > 1: sweep(f'{name}_rail{sd}', 'gunmetal', pts, 0.04, 6)
-    z0 = stations[0][0]; z1 = stations[-1][0]
-    bar(name + '_spine', 'gunmetal', V(0, stations[2][3] + stations[2][2] + 0.02, stations[1][0]), V(0, stations[-2][3] + stations[-2][2] + 0.02, stations[-2][0]), 0.06)
+        pts = [V(sd * tw * w * 1.01, y + h + 0.005, z) for z, w, h, y in st if w > 0.06]
+        if len(pts) > 1: sweep(f'{name}_rail{sd}', 'gunmetal', pts, 0.028, 6)
+    top = [V(0, y + h + 0.01, z) for z, w, h, y in st if w > 0.06]
+    if len(top) > 1: sweep(name + '_spine', 'gunmetal', top, 0.03, 6)
+    if seat:
+        z, w, h, y = max(st, key=lambda q: q[2])
+        pilot(0, y + h * 0.42, z - 0.25)
+    return st
 def pilot(x, y, z):
     emit(sphere(0.19, 20, 14), 'helmet', 'white', T(x, y, z))
     emit(sphere(0.195, 20, 14), 'visor', 'glass', T(x, y + 0.01, z + 0.04) @ S(0.9, 0.55, 0.9))
@@ -286,140 +294,156 @@ def sym_light(p, kind='nav'): light((p[0], p[1], p[2]), 0xff2030, kind); light((
 def boolean(ob, cutter, op='DIFFERENCE'):
     m = ob.modifiers.new('cut', 'BOOLEAN'); m.object = cutter; m.operation = op; m.solver = 'EXACT'; CUTS.append(cutter)
 
+def vents(ob, y, z0, n=5, w=0.32, step=0.2):
+    """row of recessed vent slots cut into `ob` (booleans)"""
+    cut = new_bm()
+    for k in range(n): merge_into(cut, box(w * 2, 0.12, 0.07), T(0, y, z0 - k * step))
+    boolean(ob, emit(cut, 'vent_cut', 'dark', keep=True))
+
 # ---------------- airframes (after the concept sheets) ----------------
 def kestrel():
-    # long needle nose, faceted fuselage, clipped delta with endplate fins, twin tails, one big engine
+    # needle nose, faceted fuselage, swept clipped delta set well aft (light leading band, dark aft panels),
+    # slim swept tip blades, twin canted tails over the nozzle, one big engine
     prism('fuselage', 'primary', [(9.8, 0.02, 0.02, -0.05), (7.6, 0.2, 0.14, -0.02), (5.6, 0.45, 0.3, 0.0), (4.0, 0.72, 0.48, 0.04), (2.2, 0.92, 0.62, 0.06), (0.0, 1.0, 0.7, 0.08), (-3.0, 1.0, 0.72, 0.08), (-4.8, 0.92, 0.74, 0.08), (-5.4, 0.9, 0.74, 0.08)], shape=lambda w, h, y: sec8(w, h, y, 0.42, 0.55, 0.15))
-    prism('spine', 'secondary', [(0.9, 0.04, 0.03, 0.74), (0.0, 0.32, 0.16, 0.76), (-4.4, 0.3, 0.18, 0.78), (-5.2, 0.05, 0.05, 0.76)], shape=lambda w, h, y: sec8(w, h, y, 0.6, 0.9, 0.1))
-    prism('nosepanel', 'secondary', [(6.6, 0.3, 0.07, 0.17), (4.6, 0.52, 0.12, 0.37), (3.9, 0.5, 0.1, 0.42)], shape=lambda w, h, y: sec8(w, h, y, 0.7, 0.9, 0.1))
-    canopy([(4.8, 0.03, 0.03, 0.42), (4.0, 0.36, 0.22, 0.5), (2.4, 0.5, 0.36, 0.58), (0.8, 0.46, 0.33, 0.6), (-0.4, 0.08, 0.06, 0.6)], bars=(3.3, 1.6))
-    pilot(0, 0.75, 2.0)
+    spine = prism('spine', 'secondary', [(0.4, 0.04, 0.03, 0.74), (-0.4, 0.32, 0.16, 0.76), (-4.4, 0.3, 0.18, 0.78), (-5.2, 0.05, 0.05, 0.76)], shape=lambda w, h, y: sec8(w, h, y, 0.6, 0.9, 0.1))
+    vents(spine, 1.0, -1.4, 5, 0.22, 0.2)
+    prism('nosepanel', 'secondary', [(6.8, 0.28, 0.07, 0.16), (5.0, 0.48, 0.1, 0.33), (4.6, 0.5, 0.1, 0.38)], shape=lambda w, h, y: sec8(w, h, y, 0.7, 0.9, 0.1))
+    canopy([(5.6, 0.03, 0.03, 0.34), (4.7, 0.34, 0.2, 0.44), (3.0, 0.5, 0.33, 0.55), (1.2, 0.46, 0.3, 0.6), (-0.2, 0.08, 0.06, 0.6)])
     for sd in (1, -1):
-        neon_slit(sd * 0.56, 0.02, 5.0, 0.6, sd * 0.12, name=f'nose_slit{sd}')
+        neon_slit(sd * 0.5, 0.02, 5.6, 0.55, sd * 0.12, name=f'nose_slit{sd}')
         prism(f'intake{sd}', 'secondary', [(3.0, 0.03, 0.22, 0), (2.6, 0.3, 0.3, 0), (0.0, 0.34, 0.32, 0), (-2.0, 0.08, 0.18, 0)], (sd * 0.98, -0.28, 0))
         emit(disc(1, 8), f'intake_face{sd}', 'inner', T(sd * 0.98, -0.28, 2.62) @ S(0.24, 0.24, 1) @ R(z=math.pi / 8))
         gun(sd * 1.3, -0.08, 2.2, 1.1, 0.06, f'gun{sd}')
-        rack(sd * 2.05, -0.36, -0.9, 3, 1.7, 0.11, 0.27, f'rack{sd}', top=-0.1)
-        fin_plate(f'tipfin{sd}', 'primary', [(-0.5, -2.45), (0.15, -2.55), (1.5, -3.5), (1.55, -4.25), (-0.5, -4.05)], 6.55, 0.0, sd, 0.1)
-        neon_slit(sd * 6.62, 0.75, -3.35, 0.7, 0, 0.05, 0.4, f'tip_slit{sd}')
-        fin_plate(f'tail{sd}', 'primary', [(0, -1.8), (0.3, -1.95), (2.0, -3.6), (2.05, -4.3), (0, -4.6)], 0.5, 0.8, sd, 0.22)
-        fin_plate(f'tailcap{sd}', 'secondary', [(1.55, -3.15), (2.0, -3.6), (2.05, -4.3), (1.55, -4.4)], 0.5, 0.8, sd, 0.22, t=0.18)
-        fin_plate(f'ventral{sd}', 'secondary', [(0, -3.2), (0.7, -4.1), (0.7, -4.6), (0, -4.8)], 0.45, -0.55, sd, math.pi - 0.45)
-    plate('wing_in', 'primary', [(0.9, 2.2), (3.9, -0.6), (2.6, -4.2), (0.9, -4.2)], 0.2, 0.06)
-    plate('wing_out', 'secondary', [(3.9, -0.6), (6.5, -2.9), (6.5, -3.85), (2.78, -3.7)], 0.2, 0.06)
-    plate('aileron', 'secondary', [(3.05, -3.8), (6.4, -3.95), (6.4, -4.35), (3.05, -4.2)], 0.14, 0.04)
+        rack(sd * 2.1, -0.36, -1.7, 3, 1.7, 0.11, 0.27, f'rack{sd}', top=-0.12)
+        fin_plate(f'tipfin{sd}', 'primary', [(-0.6, -4.55), (0.0, -4.72), (1.1, -5.45), (1.1, -5.85), (-0.6, -5.6)], 6.52, -0.32, sd, 0.08, t=0.12, ch=0.04)
+        bar(f'tip_neon{sd}', 'neon', V(sd * 6.6, -0.3, -4.72), V(sd * 6.68, 0.75, -5.45), 0.05)
+        fin_plate(f'tail{sd}', 'primary', [(0, -3.6), (0.3, -3.8), (1.5, -5.55), (1.5, -6.25), (0, -6.0)], 0.52, 0.8, sd, 0.24)
+        fin_plate(f'tailcap{sd}', 'secondary', [(1.15, -5.0), (1.5, -5.55), (1.5, -6.25), (1.15, -6.2)], 0.52, 0.8, sd, 0.24, t=0.18)
+        fin_plate(f'ventral{sd}', 'secondary', [(0, -3.4), (0.7, -4.3), (0.7, -4.8), (0, -5.0)], 0.45, -0.55, sd, math.pi - 0.45)
+    A = -0.08  # anhedral, as on the front view
+    plate('wing_le', 'primary', [(0.9, 1.2), (6.5, -4.9), (6.5, -5.2), (0.9, -1.15)], 0.2, 0.06, dih=A)
+    plate('wing_aft', 'secondary', [(0.9, -1.15), (6.5, -5.2), (6.5, -5.45), (0.9, -5.2)], 0.2, 0.06, dih=A)
+    plate('aileron', 'secondary', [(3.2, -5.3), (6.4, -5.52), (6.4, -5.85), (3.2, -5.65)], 0.12, 0.035, dih=A)
+    plate('flap', 'secondary', [(1.0, -5.27), (3.05, -5.32), (3.05, -5.65), (1.0, -5.6)], 0.12, 0.035, dih=A)
     plate('canard', 'primary', [(0.75, 4.4), (2.3, 3.3), (2.3, 2.95), (0.75, 3.1)], 0.12, 0.04, T(0, 0.05, 0))
     engine(0, 0.08, -5.9, 0.8, 2.0)
-    sym_light((6.62, 1.55, -3.95)); light((0.62, 2.85, -4.3), 0xffffff, 'strobe'); light((0, -0.72, -1.0), 0xff2030, 'beacon')
-    decal_side(0.5 + 0.22 * 1.1 + 0.1, 0.8 + 1.05, -3.3, 1, 0.22, 0.9); decal_side(-(0.5 + 0.22 * 1.1 + 0.1), 0.8 + 1.05, -3.3, -1, 0.22, 0.9)
-    META.update(stripe=[0.16, 0.3, 0.55], band=[4.6, 5.1])
+    sym_light((6.66, 0.8, -5.6)); light((0.9, 2.15, -6.1), 0xffffff, 'strobe'); light((0, -0.72, -1.0), 0xff2030, 'beacon')
+    decal_side(0.52 + 0.24 * 0.8 + 0.1, 0.8 + 0.8, -4.9, 1, 0.24, 0.8); decal_side(-(0.52 + 0.24 * 0.8 + 0.1), 0.8 + 0.8, -4.9, -1, 0.24, 0.8)
+    META.update(stripe=[0.16, 0.3, 0.55], band=[4.4, 4.9])
 
 def mirage():
-    # crescent flying wing, curved claws at the tips with engine pods, launchers beside the cockpit
+    # flying crescent: concave leading edge, straight trailing edge to wide tips, long pods with claws hooked forward-down
     prism('body', 'primary', [(5.6, 0.03, 0.03, -0.08), (4.4, 0.35, 0.2, -0.02), (2.8, 0.74, 0.4, 0.04), (0.8, 1.0, 0.52, 0.08), (-1.6, 1.05, 0.52, 0.08), (-3.4, 0.7, 0.42, 0.06), (-3.9, 0.3, 0.28, 0.05)], shape=lambda w, h, y: sec8(w, h, y, 0.5, 0.6, 0.12))
     prism('bodytop', 'secondary', [(1.6, 0.2, 0.05, 0.56), (0.6, 0.45, 0.08, 0.6), (-2.6, 0.42, 0.08, 0.58), (-3.3, 0.15, 0.05, 0.5)], shape=lambda w, h, y: sec8(w, h, y, 0.8, 0.9, 0.1))
-    canopy([(3.9, 0.03, 0.03, 0.32), (3.1, 0.44, 0.24, 0.4), (1.6, 0.6, 0.36, 0.48), (0.2, 0.52, 0.33, 0.52), (-0.9, 0.08, 0.06, 0.5)], bars=(2.4,), tw=0.5)
-    pilot(0, 0.66, 1.4)
-    plate('wing', 'secondary', [(0.95, 1.6), (3.4, 0.9), (5.8, -0.1), (7.9, -1.3), (8.2, -2.6), (6.0, -1.9), (3.6, -1.2), (1.0, -2.6)], 0.24, 0.07)
-    plate('wing_le', 'primary', [(0.95, 2.15), (3.4, 1.45), (5.8, 0.45), (8.0, -0.75), (7.9, -1.3), (5.8, -0.1), (3.4, 0.9), (0.95, 1.6)], 0.24, 0.07)
-    plate('wing_flap', 'primary', [(3.8, -1.3), (6.0, -2.0), (6.0, -2.35), (3.8, -1.7)], 0.14, 0.04)
+    canopy([(3.9, 0.03, 0.03, 0.3), (3.1, 0.44, 0.24, 0.38), (1.6, 0.6, 0.34, 0.46), (0.2, 0.52, 0.31, 0.5), (-0.9, 0.08, 0.06, 0.48)], tw=0.5)
+    plate('wing', 'secondary', [(0.95, 1.6), (3.4, 0.8), (5.8, -0.3), (8.0, -1.2), (8.4, -1.6), (8.4, -5.0), (1.0, -2.0)], 0.24, 0.07)
+    plate('wing_le', 'primary', [(0.95, 2.15), (3.4, 1.35), (5.8, 0.25), (8.0, -0.7), (8.0, -1.2), (5.8, -0.3), (3.4, 0.8), (0.95, 1.6)], 0.24, 0.07)
+    plate('wing_flap', 'primary', [(3.4, -3.02), (6.8, -4.4), (6.8, -4.75), (3.4, -3.37)], 0.14, 0.04)
     for sd in (1, -1):
-        fin_plate(f'claw{sd}', 'primary', crescent((-1.4, 2.2), (2.1, -4.0), 1.0, 0.6), 8.55, 0.15, sd, 0.15, t=0.32, ch=0.1)
-        prism(f'pod{sd}', 'secondary', [(1.1, 0.12, 0.12), (0.6, 0.42, 0.42), (-1.8, 0.46, 0.46), (-2.2, 0.42, 0.42)], (sd * 8.05, 0.2, 0), shape=oct_shape)
-        neon_slit(sd * 8.52, 0.2, -0.6, 1.4, 0, 0.05, 0.2, f'pod_slit{sd}')
-        engine(sd * 8.05, 0.2, -2.6, 0.4, 0.8, f'eng{sd}')
-        emit(box(0.42, 0.42, 1.3), f'launcher{sd}', 'secondary', T(sd * 1.08, 0.08, 1.6), bevel=0.04)
+        fin_plate(f'claw{sd}', 'primary', crescent((0.55, -4.6), (-1.5, 1.3), 0.8, 0.55), 8.6, 0.2, sd, 0.26, t=0.3, ch=0.09)
+        prism(f'pod{sd}', 'secondary', [(0.5, 0.12, 0.12), (0.0, 0.42, 0.42), (-6.0, 0.46, 0.46), (-6.5, 0.42, 0.42)], (sd * 8.1, 0.2, 0), shape=oct_shape)
+        neon_slit(sd * 8.57, 0.2, -3.0, 3.2, 0, 0.05, 0.2, f'pod_slit{sd}')
+        engine(sd * 8.1, 0.2, -6.9, 0.4, 0.8, f'eng{sd}')
+        emit(box(0.42, 0.42, 1.3), f'launcher{sd}', 'secondary', T(sd * 1.08, 0.08, 2.8), bevel=0.04)
         for k in range(4):
             px, py = sd * 1.08 + (0.1 if k % 2 else -0.1), 0.08 + (0.1 if k < 2 else -0.1)
-            emit(disc(0.065, 10), f'tube{sd}{k}', 'inner', T(px, py, 2.26)); emit(torus(0.065, 0.018, 12, 4), f'tubeglow{sd}{k}', 'neon', T(px, py, 2.27))
+            emit(disc(0.065, 10), f'tube{sd}{k}', 'inner', T(px, py, 3.46)); emit(torus(0.065, 0.018, 12, 4), f'tubeglow{sd}{k}', 'neon', T(px, py, 3.47))
         neon_slit(sd * 0.62, -0.18, 3.0, 0.7, sd * 0.2, 0.05, 0.08, f'chin{sd}')
-        emit(box(0.1, 0.4, 0.8), f'pylon{sd}', 'dark', T(sd * 4.6, -0.28, -0.4), bevel=0.02)
-        missile(sd * 4.6, -0.6, -0.4, 1.8, 0.15, f'msl{sd}')
-    sym_light((8.7, 1.4, -3.4)); light((0, 0.75, -3.2), 0xffffff, 'strobe'); light((0, -0.5, 0.5), 0xff2030, 'beacon')
-    decal_up(5.0, 0.13, -1.0, 1.4); decal_up(-5.0, 0.13, -1.0, 1.4)
+        emit(box(0.1, 0.4, 0.8), f'pylon{sd}', 'dark', T(sd * 6.0, -0.28, -0.6), bevel=0.02)
+        missile(sd * 6.0, -0.6, -0.4, 1.9, 0.15, f'msl{sd}')
+    sym_light((8.7, 0.25, -6.0)); light((0, 0.75, -3.2), 0xffffff, 'strobe'); light((0, -0.5, 0.5), 0xff2030, 'beacon')
+    decal_up(4.6, 0.13, -1.6, 1.4); decal_up(-4.6, 0.13, -1.6, 1.4)
     META.update(stripe=[0.2, 0.36, 0.5], band=[6.2, 6.7])
 
 def bastion():
-    # heavy gunship: rotary cannons beside the cockpit, twin top engines with glowing grilles, straight wings, missile racks
-    prism('body', 'primary', [(6.4, 0.25, 0.2, -0.1), (5.6, 0.75, 0.5, -0.05), (4.0, 1.15, 0.8, 0.05), (2.0, 1.3, 0.95, 0.12), (-1.0, 1.3, 0.95, 0.15), (-3.5, 1.0, 0.8, 0.2), (-6.5, 0.55, 0.55, 0.35), (-7.6, 0.45, 0.5, 0.4)], shape=lambda w, h, y: sec8(w, h, y, 0.55, 0.7, 0.25))
-    prism('chin', 'secondary', [(5.9, 0.4, 0.12, -0.42), (4.2, 0.85, 0.2, -0.62), (2.0, 0.95, 0.22, -0.72)], shape=lambda w, h, y: sec8(w, h, y, 0.9, 0.7, 0.2))
-    canopy([(4.8, 0.03, 0.03, 0.62), (4.0, 0.55, 0.3, 0.72), (2.5, 0.72, 0.45, 0.86), (1.0, 0.65, 0.42, 0.9), (0.0, 0.1, 0.1, 0.88)], bars=(3.2, 1.8), tw=0.5)
-    pilot(0, 1.12, 1.9)
-    prism('hump', 'secondary', [(0.2, 0.3, 0.1, 1.0), (-0.6, 0.62, 0.22, 1.08), (-1.4, 0.62, 0.22, 1.1), (-1.8, 0.4, 0.15, 1.05)], shape=lambda w, h, y: sec8(w, h, y, 0.8, 0.9, 0.2))
+    # twin-boom gunship: booms carry the rotary cannons in dark cowls, two big engine boxes aft with glowing grilles,
+    # fins at the boom tails, straight wing with dark tips, two three-missile racks per side
+    prism('body', 'primary', [(6.4, 0.55, 0.22, -0.1), (5.6, 0.85, 0.5, -0.05), (4.0, 1.15, 0.8, 0.05), (2.0, 1.3, 0.95, 0.12), (-1.0, 1.3, 0.95, 0.15), (-3.5, 1.1, 0.85, 0.2), (-4.8, 0.8, 0.65, 0.3)], shape=lambda w, h, y: sec8(w, h, y, 0.55, 0.7, 0.25))
+    prism('chin', 'secondary', [(5.9, 0.5, 0.12, -0.4), (4.2, 0.85, 0.2, -0.62), (2.0, 0.95, 0.22, -0.72)], shape=lambda w, h, y: sec8(w, h, y, 0.9, 0.7, 0.2))
+    canopy([(4.8, 0.03, 0.03, 0.6), (4.0, 0.55, 0.28, 0.7), (2.5, 0.72, 0.4, 0.84), (1.0, 0.65, 0.37, 0.88), (0.0, 0.1, 0.08, 0.86)], tw=0.5)
+    hump = prism('hump', 'secondary', [(0.2, 0.3, 0.1, 1.0), (-0.6, 0.62, 0.22, 1.08), (-2.6, 0.62, 0.22, 1.1), (-3.2, 0.4, 0.15, 1.05)], shape=lambda w, h, y: sec8(w, h, y, 0.8, 0.9, 0.2))
+    vents(hump, 1.32, -0.9, 6, 0.4, 0.26)
     for sd in (1, -1):
-        prism(f'gunpod{sd}', 'secondary', [(3.9, 0.3, 0.3), (3.4, 0.56, 0.56), (-1.0, 0.6, 0.6), (-2.0, 0.4, 0.45)], (sd * 1.95, -0.05, 0), shape=oct_shape)
-        gatling(sd * 1.95, -0.05, 3.85, 1.3, 0.2, f'gat{sd}')
-        prism(f'engbox{sd}', 'secondary', [(-0.9, 0.5, 0.42), (-1.2, 0.6, 0.5), (-4.4, 0.6, 0.5), (-4.9, 0.5, 0.42)], (sd * 0.9, 1.35, 0), shape=lambda w, h, y=0: sec8(w, h, y, 0.85, 0.85, 0.5))
-        emit(box(0.8, 0.58, 0.04), f'grille_back{sd}', 'warm', T(sd * 0.9, 1.35, -0.86))
-        grille(sd * 0.9, 1.35, -0.82, 0.9, 0.6, 5, 'dark', 'x', f'grille{sd}', 0.08)
-        emit(box(1.0, 0.08, 0.7), f'engcap{sd}', 'dark', T(sd * 0.9, 1.88, -2.4), bevel=0.02)
-        engine(sd * 0.9, 1.35, -5.35, 0.42, 0.9, f'eng{sd}')
-        fin_plate(f'fin{sd}', 'primary', [(0, -3.6), (0.4, -3.8), (2.8, -5.6), (2.85, -6.4), (0, -6.6)], 1.6, 1.4, sd, 0.08, t=0.2)
-        fin_plate(f'fintip{sd}', 'secondary', [(2.2, -5.0), (2.8, -5.6), (2.85, -6.4), (2.2, -6.5)], 1.6, 1.4, sd, 0.08, t=0.22)
-        for i, x in enumerate((3.3, 5.4)): rack(sd * x, -0.48, -0.1, 3, 1.5, 0.11, 0.25, f'rack{sd}{i}', top=-0.04)
-        for k in range(2): emit(box(0.16, 0.02, 1.2), f'stripe{sd}{k}', 'accent', T(sd * (5.7 + k * 0.32), 0.25, -0.5))
+        prism(f'boom{sd}', 'primary', [(2.6, 0.5, 0.5), (2.2, 0.62, 0.62), (-5.6, 0.6, 0.6), (-7.0, 0.42, 0.45)], (sd * 2.4, -0.05, 0), shape=oct_shape)
+        prism(f'cowl{sd}', 'secondary', [(3.0, 0.48, 0.48), (2.7, 0.72, 0.72), (0.6, 0.72, 0.72), (0.2, 0.62, 0.62)], (sd * 2.4, -0.05, 0), shape=oct_shape)
+        gatling(sd * 2.4, -0.05, 2.75, 0.6, 0.22, f'gat{sd}')
+        prism(f'engbox{sd}', 'secondary', [(-3.6, 0.82, 0.5), (-3.9, 0.95, 0.58), (-6.8, 0.95, 0.58), (-7.2, 0.82, 0.5)], (sd * 1.0, 1.4, 0), shape=lambda w, h, y=0: sec8(w, h, y, 0.85, 0.85, 0.5))
+        emit(box(1.3, 0.6, 0.04), f'grille_back{sd}', 'warm', T(sd * 1.0, 1.4, -3.56))
+        grille(sd * 1.0, 1.4, -3.52, 1.45, 0.64, 5, 'dark', 'x', f'grille{sd}', 0.08)
+        emit(box(1.3, 0.08, 0.8), f'engcap{sd}', 'dark', T(sd * 1.0, 1.99, -5.2), bevel=0.02)
+        engine(sd * 1.0, 1.4, -7.6, 0.46, 0.9, f'eng{sd}')
+        fin_plate(f'fin{sd}', 'primary', [(0, -4.4), (0.4, -4.6), (2.8, -6.3), (2.85, -7.0), (0, -7.1)], 2.4, 0.5, sd, 0.06, t=0.2)
+        fin_plate(f'fintip{sd}', 'secondary', [(2.2, -5.8), (2.8, -6.3), (2.85, -7.0), (2.2, -7.05)], 2.4, 0.5, sd, 0.06, t=0.22)
+        for i, x in enumerate((4.1, 5.9)): rack(sd * x, -0.48, 0.3, 3, 1.5, 0.11, 0.25, f'rack{sd}{i}', top=-0.04)
+        for k in range(2): emit(box(0.16, 0.02, 1.2), f'stripe{sd}{k}', 'accent', T(sd * (6.0 + k * 0.32), 0.25, -0.5))
     plate('wing', 'primary', [(1.3, 1.2), (6.6, 0.5), (6.6, -1.5), (1.3, -2.4)], 0.28, 0.07, T(0, 0.1, 0))
     plate('wing_le', 'secondary', [(1.3, 1.6), (6.6, 0.85), (6.6, 0.5), (1.3, 1.2)], 0.28, 0.07, T(0, 0.1, 0))
     plate('wing_tip', 'secondary', [(6.6, 0.85), (7.4, 0.55), (7.7, -0.2), (7.4, -1.4), (6.6, -1.5)], 0.28, 0.07, T(0, 0.1, 0))
     plate('flap', 'secondary', [(2.0, -2.45), (6.4, -1.6), (6.4, -1.95), (2.0, -2.8)], 0.16, 0.04, T(0, 0.1, 0))
-    sym_light((7.72, 0.12, -0.2)); light((1.72, 4.2, -6.2), 0xffffff, 'strobe'); light((0, -0.9, -1.5), 0xff2030, 'beacon')
-    decal_up(4.4, 0.25, -0.6, 1.4); decal_up(-4.4, 0.25, -0.6, 1.4)
+    sym_light((7.72, 0.12, -0.2)); light((2.5, 3.35, -6.9), 0xffffff, 'strobe'); light((0, -0.9, -1.5), 0xff2030, 'beacon')
+    decal_up(4.8, 0.25, -0.8, 1.4); decal_up(-4.8, 0.25, -0.8, 1.4)
     META.update(stripe=[0.3, 0.5, 0.9], band=[6.7, 7.0])
 
 def arc():
-    # twin prongs with a beam between them, central body with radiators, swept wings, underwing cannons
+    # twin prongs with the beam between them, broad cropped delta, radiators forward beside the cockpit,
+    # underwing cannons forward, low blades over the nozzles
     for sd in (1, -1):
         prism(f'prong{sd}', 'primary', [(8.4, 0.06, 0.06, 0), (7.6, 0.3, 0.24, 0), (6.0, 0.42, 0.34, 0.02), (2.0, 0.5, 0.42, 0.05), (-0.6, 0.55, 0.45, 0.08)], (sd * 1.0, 0, 0), shape=lambda w, h, y: sec8(w, h, y, 0.45, 0.55, 0.2))
         prism(f'prongtop{sd}', 'secondary', [(6.8, 0.15, 0.04, 0.3), (3.0, 0.3, 0.06, 0.45), (0.0, 0.3, 0.06, 0.5)], (sd * 1.0, 0, 0), shape=lambda w, h, y: sec8(w, h, y, 0.8, 0.9, 0.1))
-        neon_slit(sd * 0.74, 0.0, 7.4, 0.9, -sd * 0.18, 0.05, 0.14, f'prong_tip{sd}')
-        emit(torus(0.16, 0.05, 16, 6), f'node{sd}', 'gunmetal', T(sd * 0.72, 0, 6.6) @ R(y=math.pi / 2))
+        neon_slit(sd * 0.74, 0.0, 7.75, 0.7, -sd * 0.18, 0.05, 0.14, f'prong_tip{sd}')
+        emit(torus(0.16, 0.05, 16, 6), f'node{sd}', 'gunmetal', T(sd * 0.72, 0, 7.3) @ R(y=math.pi / 2))
         bar(f'rail{sd}', 'dark', V(sd * 0.55, 0.0, 2.6), V(sd * 0.8, 0.0, 2.6), 0.16)
-        emit(box(0.42, 0.55, 2.0), f'radiator{sd}', 'dark', T(sd * 1.45, 0.12, -1.3), bevel=0.03)
-        grille(sd * 1.67, 0.12, -1.3, 1.9, 0.5, 11, 'gunmetal', 'z', f'rad_fins{sd}', 0.06)
+        emit(box(0.42, 0.55, 2.0), f'radiator{sd}', 'dark', T(sd * 1.8, 0.12, 1.6), bevel=0.03)
+        grille(sd * 2.02, 0.12, 1.6, 1.9, 0.5, 11, 'gunmetal', 'z', f'rad_fins{sd}', 0.06)
         prism(f'nacelle{sd}', 'secondary', [(-1.6, 0.2, 0.2), (-2.2, 0.38, 0.38), (-5.7, 0.4, 0.4), (-6.0, 0.36, 0.36)], (sd * 1.25, 0.38, 0), shape=oct_shape)
         engine(sd * 1.25, 0.38, -6.3, 0.34, 0.8, f'eng{sd}')
-        fin_plate(f'fin{sd}', 'primary', [(0, -4.2), (0.3, -4.4), (1.25, -5.4), (1.25, -5.8), (0, -6.0)], 1.25, 0.72, sd, 0.3)
-        emit(box(0.32, 0.32, 1.3), f'gunpod{sd}', 'dark', T(sd * 3.3, -0.36, -3.0), bevel=0.03)
-        emit(box(0.1, 0.3, 0.8), f'gunpyl{sd}', 'dark', T(sd * 3.3, -0.08, -3.0), bevel=0.02)
-        gun(sd * 3.3, -0.36, -2.5, 1.6, 0.055, f'gun{sd}', 2)
-    tube('rod', 'metal', V(-0.72, 0, 6.6), V(0.72, 0, 6.6), 0.055, 10)
-    META['emitter'] = [0, 0, 6.6]
-    bar('beam', 'neon', V(0, 0, 6.45), V(0, 0, 2.45), 0.05)
+        fin_plate(f'fin{sd}', 'primary', [(0, -5.0), (0.25, -5.2), (0.6, -5.8), (0.6, -6.1), (0, -6.2)], 1.25, 0.72, sd, 0.3)
+        emit(box(0.32, 0.32, 1.3), f'gunpod{sd}', 'dark', T(sd * 3.3, -0.36, 0.0), bevel=0.03)
+        emit(box(0.1, 0.3, 0.8), f'gunpyl{sd}', 'dark', T(sd * 3.3, -0.08, -0.4), bevel=0.02)
+        gun(sd * 3.3, -0.36, 0.5, 1.6, 0.055, f'gun{sd}', 2)
+    tube('rod', 'metal', V(-0.72, 0, 7.3), V(0.72, 0, 7.3), 0.055, 10)
+    META['emitter'] = [0, 0, 7.3]
+    bar('beam', 'neon', V(0, 0, 7.15), V(0, 0, 2.45), 0.05)
     emit(torus(0.24, 0.06, 20, 6), 'lens_ring', 'gunmetal', T(0, 0, 2.42)); emit(disc(0.22, 20), 'lens', 'neon', T(0, 0, 2.43))
     prism('body', 'primary', [(3.0, 0.3, 0.25, 0.2), (2.2, 0.75, 0.45, 0.25), (0.0, 1.0, 0.6, 0.3), (-3.0, 1.05, 0.6, 0.3), (-5.5, 0.8, 0.5, 0.3)], shape=lambda w, h, y: sec8(w, h, y, 0.5, 0.6, 0.2))
-    canopy([(2.6, 0.03, 0.03, 0.55), (1.9, 0.42, 0.25, 0.65), (0.6, 0.55, 0.36, 0.75), (-0.8, 0.5, 0.34, 0.78), (-2.0, 0.08, 0.06, 0.76)], bars=(1.3,))
-    pilot(0, 0.98, 0.4)
-    plate('wing', 'primary', [(1.6, -1.0), (6.4, -4.4), (6.5, -4.75), (1.6, -3.9)], 0.18, 0.05, T(0, 0.1, 0))
-    plate('aileron', 'secondary', [(3.4, -4.0), (6.4, -4.85), (6.4, -5.2), (3.4, -4.4)], 0.12, 0.03, T(0, 0.1, 0))
-    sym_light((6.5, 0.2, -4.7)); light((0, 0.95, -5.0), 0xffffff, 'strobe'); light((0, -0.35, -2.0), 0xff2030, 'beacon')
-    decal_up(4.1, 0.2, -3.3, 1.3); decal_up(-4.1, 0.2, -3.3, 1.3)
-    META.update(stripe=[0.2, 0.36, 0.6], band=[5.2, 5.6])
+    canopy([(2.6, 0.03, 0.03, 0.55), (1.9, 0.42, 0.24, 0.64), (0.6, 0.55, 0.33, 0.73), (-0.8, 0.5, 0.31, 0.76), (-2.0, 0.08, 0.06, 0.74)])
+    A = -0.07
+    plate('wing', 'primary', [(1.6, 0.4), (5.6, -2.6), (5.6, -3.4), (1.6, -3.9)], 0.18, 0.05, T(0, 0.1, 0), dih=A)
+    plate('wing_panel', 'secondary', [(3.6, -1.1), (5.4, -2.45), (5.4, -3.2), (3.6, -3.45)], 0.21, 0.03, T(0, 0.1, 0), dih=A)
+    plate('aileron', 'secondary', [(3.0, -3.78), (5.5, -3.47), (5.5, -3.8), (3.0, -4.1)], 0.12, 0.03, T(0, 0.1, 0), dih=A)
+    sym_light((5.6, 0.0, -3.0)); light((0, 0.95, -5.0), 0xffffff, 'strobe'); light((0, -0.35, -2.0), 0xff2030, 'beacon')
+    decal_up(3.6, 0.12, -2.0, 1.2); decal_up(-3.6, 0.12, -2.0, 1.2)
+    META.update(stripe=[0.2, 0.36, 0.6], band=[4.6, 5.0])
 
 def nomad():
-    # blunt faceted nose with neon slits, two octagonal intakes with U-shaped glow, swept wings, V-tail
-    prism('body', 'primary', [(6.9, 0.3, 0.12, -0.1), (6.0, 0.6, 0.3, -0.05), (4.2, 0.9, 0.5, 0.05), (2.0, 1.0, 0.62, 0.12), (-1.5, 1.05, 0.65, 0.15), (-4.5, 0.85, 0.6, 0.15), (-5.8, 0.6, 0.45, 0.12)], shape=lambda w, h, y: sec8(w, h, y, 0.55, 0.75, 0.2))
-    prism('dorsal', 'secondary', [(1.2, 0.3, 0.06, 0.76), (0.2, 0.62, 0.1, 0.8), (-3.6, 0.6, 0.1, 0.76), (-4.6, 0.3, 0.06, 0.72)], shape=lambda w, h, y: sec8(w, h, y, 0.85, 0.9, 0.2))
-    canopy([(4.6, 0.03, 0.03, 0.42), (3.8, 0.45, 0.25, 0.52), (2.2, 0.62, 0.4, 0.62), (0.6, 0.55, 0.36, 0.68), (-0.6, 0.08, 0.06, 0.66)], bars=(3.0, 1.4), tw=0.5)
-    pilot(0, 0.98, 1.6)
+    # dark faceted body with orange spine and canopy surround, duckbill nose with neon slits, wide octagonal
+    # intakes with U glow, low-sweep wings with a forward-swept trailing edge and dark caps, V-tail
+    prism('body', 'secondary', [(6.9, 0.55, 0.12, -0.1), (6.0, 0.7, 0.3, -0.05), (4.2, 0.92, 0.5, 0.05), (2.0, 1.0, 0.62, 0.12), (-1.5, 1.05, 0.65, 0.15), (-4.5, 0.85, 0.6, 0.15), (-5.8, 0.6, 0.45, 0.12)], shape=lambda w, h, y: sec8(w, h, y, 0.55, 0.75, 0.2))
+    prism('nosetop', 'primary', [(6.85, 0.42, 0.05, 0.05), (5.2, 0.62, 0.08, 0.33), (4.0, 0.7, 0.1, 0.5)], shape=lambda w, h, y: sec8(w, h, y, 0.85, 0.9, 0.2))
+    dorsal = prism('dorsal', 'primary', [(1.2, 0.3, 0.06, 0.76), (0.2, 0.62, 0.1, 0.8), (-3.6, 0.6, 0.1, 0.76), (-4.6, 0.3, 0.06, 0.72)], shape=lambda w, h, y: sec8(w, h, y, 0.85, 0.9, 0.2))
+    vents(dorsal, 0.9, -1.0, 4, 0.3, 0.24)
+    canopy([(5.4, 0.03, 0.03, 0.42), (4.6, 0.45, 0.25, 0.52), (3.0, 0.62, 0.38, 0.62), (1.4, 0.55, 0.34, 0.68), (0.2, 0.08, 0.06, 0.66)], tw=0.5)
     for sd in (1, -1):
-        neon_slit(sd * 0.26, -0.06, 6.86, 0.3, 0, 0.05, 0.1, f'nose_slit{sd}')
-        nac = prism(f'nacelle{sd}', 'secondary', [(2.6, 0.6, 0.6), (2.2, 0.66, 0.66), (-3.6, 0.66, 0.66), (-4.6, 0.55, 0.55)], (sd * 1.95, -0.05, 0), shape=oct_shape)
-        boolean(nac, emit(prism_bm([(3.2, 0.46, 0.46), (1.8, 0.46, 0.46)], (sd * 1.95, -0.05, 0), oct_shape), f'nac_cut{sd}', 'dark', keep=True))
-        emit(disc(0.5, 8), f'intake_back{sd}', 'inner', T(sd * 1.95, -0.05, 1.82) @ R(z=math.pi / 8))
-        for a, b in (((-0.24, 0.24), (-0.24, -0.2)), ((-0.24, -0.2), (0.24, -0.2)), ((0.24, -0.2), (0.24, 0.24))):
-            bar(f'u{sd}{a}{b}', 'neon', V(sd * 1.95 + a[0], -0.05 + a[1], 1.95), V(sd * 1.95 + b[0], -0.05 + b[1], 1.95), 0.07)
-        plate(f'nactop{sd}', 'primary', [(-0.32, 2.2), (0.32, 2.2), (0.32, -3.4), (-0.32, -3.4)], 0.08, 0.03, T(sd * 1.95, 0.66, 0), sym=False)
-        engine(sd * 1.95, -0.05, -5.0, 0.5, 0.9, f'eng{sd}')
-        fin_plate(f'vtail{sd}', 'primary', [(0, -2.8), (0.4, -3.1), (2.9, -4.9), (2.95, -5.5), (0, -5.8)], 0.65, 0.55, sd, 0.55, t=0.18)
-        fin_plate(f'vtailtip{sd}', 'secondary', [(2.2, -4.35), (2.9, -4.9), (2.95, -5.5), (2.2, -5.6)], 0.65, 0.55, sd, 0.55, t=0.2)
-        for i, (x, z) in enumerate(((3.9, -1.0), (5.1, -1.5))):
+        neon_slit(sd * 0.3, -0.06, 6.86, 0.3, 0, 0.05, 0.1, f'nose_slit{sd}')
+        nac = prism(f'nacelle{sd}', 'secondary', [(2.6, 0.78, 0.78), (2.2, 0.85, 0.85), (-3.6, 0.85, 0.85), (-4.6, 0.7, 0.7)], (sd * 2.6, -0.05, 0), shape=oct_shape)
+        boolean(nac, emit(prism_bm([(3.2, 0.62, 0.62), (1.8, 0.62, 0.62)], (sd * 2.6, -0.05, 0), oct_shape), f'nac_cut{sd}', 'dark', keep=True))
+        emit(disc(0.66, 8), f'intake_back{sd}', 'inner', T(sd * 2.6, -0.05, 1.82) @ R(z=math.pi / 8))
+        for a, b in (((-0.32, 0.32), (-0.32, -0.26)), ((-0.32, -0.26), (0.32, -0.26)), ((0.32, -0.26), (0.32, 0.32))):
+            bar(f'u{sd}{a}{b}', 'neon', V(sd * 2.6 + a[0], -0.05 + a[1], 1.95), V(sd * 2.6 + b[0], -0.05 + b[1], 1.95), 0.08)
+        plate(f'nactop{sd}', 'primary', [(-0.42, 2.2), (0.42, 2.2), (0.42, -3.4), (-0.42, -3.4)], 0.08, 0.03, T(sd * 2.6, 0.84, 0), sym=False)
+        engine(sd * 2.6, -0.05, -5.0, 0.62, 0.9, f'eng{sd}')
+        fin_plate(f'vtail{sd}', 'primary', [(0, -2.8), (0.4, -3.1), (2.9, -4.9), (2.95, -5.5), (0, -5.8)], 0.65, 0.55, sd, 0.7, t=0.18)
+        fin_plate(f'vtailtip{sd}', 'secondary', [(2.2, -4.35), (2.9, -4.9), (2.95, -5.5), (2.2, -5.6)], 0.65, 0.55, sd, 0.7, t=0.2)
+        for i, (x, z) in enumerate(((4.3, 0.4), (5.6, 0.0))):
             emit(box(0.1, 0.3, 0.7), f'pylon{sd}{i}', 'dark', T(sd * x, -0.22, z + 0.1), bevel=0.02)
             missile(sd * x, -0.5, z, 1.6, 0.13, f'msl{sd}{i}')
-    plate('wing', 'primary', [(2.5, 0.2), (7.6, -2.6), (7.65, -2.95), (2.5, -2.75)], 0.2, 0.06)
-    plate('wing_dark', 'secondary', [(2.5, 0.2), (4.2, -0.75), (4.2, -2.82), (2.5, -2.75)], 0.22, 0.06)
-    plate('flap', 'secondary', [(2.8, -2.85), (7.6, -3.05), (7.6, -3.4), (2.8, -3.3)], 0.14, 0.04)
-    sym_light((7.66, 0.12, -2.8)); light((0.65 + 0.55 * 2.9, 0.55 + 2.5, -5.2), 0xffffff, 'strobe'); light((0, -0.6, -1.0), 0xff2030, 'beacon')
-    decal_up(5.0, 0.12, -1.9, 1.2); decal_up(-5.0, 0.12, -1.9, 1.2)
+    A = -0.06
+    plate('wing', 'primary', [(3.3, 0.3), (7.2, -0.42), (7.2, -1.68), (3.3, -2.4)], 0.2, 0.06, dih=A)
+    plate('wing_cap', 'secondary', [(7.2, -0.42), (7.6, -0.5), (7.7, -1.6), (7.2, -1.68)], 0.22, 0.06, dih=A)
+    plate('wing_root', 'secondary', [(3.3, 0.3), (4.4, 0.1), (4.4, -2.2), (3.3, -2.4)], 0.22, 0.06, dih=A)
+    plate('flap', 'secondary', [(4.5, -2.3), (7.1, -1.78), (7.1, -2.1), (4.5, -2.62)], 0.14, 0.04, dih=A)
+    sym_light((7.7, -0.1, -1.1)); light((0.65 + 0.64 * 2.9, 0.55 + 2.2, -5.2), 0xffffff, 'strobe'); light((0, -0.6, -1.0), 0xff2030, 'beacon')
+    decal_up(5.6, 0.05, -1.0, 1.1); decal_up(-5.6, 0.05, -1.0, 1.1)
     META.update(stripe=[0.22, 0.4, 0.7], band=[6.4, 6.9])
 
 DESIGNS = {'kestrel': kestrel, 'mirage': mirage, 'bastion': bastion, 'arc': arc, 'nomad': nomad}

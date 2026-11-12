@@ -46,9 +46,11 @@
       <p id="shipDesc"></p>
       <div id="shipStats" class="stats"></div>
       <div class="ability"><b id="abName"></b><span id="abDesc"></span><kbd>Q</kbd></div>
+      <h3>Окраска этого самолёта</h3>
+      <div id="shipLiveries" class="liveries"></div>
     </section>
     <section data-pane="paint" hidden>
-      <h3>Окраски самолёта · 5 штук</h3>
+      <h3>Окраски · <span id="paintFor"></span></h3>
       <div id="liveryList" class="liveries"></div>
       <h3>Покрытие</h3>
       <div id="finishList" class="chips"></div>
@@ -96,6 +98,7 @@
     </section>
   </aside>
   <button id="startBtn" class="start">НА СТАРТ</button>
+  <div class="orbit-hint">Тяните мышью или пальцем — повернуть самолёт · колесо — приблизить</div>
   <div id="swatchPop" class="pop" hidden></div>
 </div>
 
@@ -116,7 +119,7 @@
   </div>
   <div class="br">
     <div class="slot ability" id="hAbility"><div class="ring" id="hAbRing"></div><b id="hAbName"></b><kbd>Q</kbd></div>
-    <div class="slot item" id="hItem"><span class="ico" id="hItemIco">·</span><b id="hItemName">ПУСТО</b><kbd>E</kbd></div>
+    <div class="slot item" id="hItem"><span class="ico" id="hItemIco">·</span><b id="hItemName">ПУСТО</b><small id="hItemDesc">влетите в кейс</small><kbd>E</kbd></div>
     <div class="slot msl"><b id="hMslName"></b><div class="pips" id="hMsl"></div><kbd>F</kbd></div>
   </div>
   <div class="cross" id="cross"></div>
@@ -124,6 +127,7 @@
   <div id="tags"></div>
   <div class="center" id="hCenter"></div>
   <div class="sub" id="hSub"></div>
+  <div class="toast" id="hToast"></div>
   <div class="feed" id="hFeed"></div>
   <div class="mcam" id="hMcam" hidden>КАМЕРА РАКЕТЫ · R</div>
   <div class="slowmo" id="hSlow" hidden>ЗАМЕДЛЕНИЕ</div>

@@ -64,7 +64,7 @@ export function buildCapitalShip({ L = 520, seed = 1, accent = 0xff3c8a, broken 
     if (!broken) {
       const disc = new THREE.Mesh(new THREE.CircleGeometry(rad * 0.95, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x6fd6ff).multiplyScalar(4) }));
       disc.position.set(x, y + H * 0.1, -L * 0.555); disc.rotation.y = Math.PI; g.add(disc);
-      const fl = glowSprite(0x58c8ff, rad * 5); fl.position.copy(disc.position).z -= rad; g.add(fl); engines.push(fl);
+      const fl = glowSprite(0x2a6a9a, rad * 3); // dimmer exhaust flare (was blowing out to white) fl.position.copy(disc.position).z -= rad; g.add(fl); engines.push(fl);
     }
   }
   // greebles

@@ -51,16 +51,20 @@ function flameMaterial(color) {
 
 // Panel lines, rivets and racing stripes in object space plus a darker belly.
 // stripe = [inner |x|, outer |x|, min y, enabled]
-function paintShader(mat, stripeColor, stripe) {
-  const U = { uStripeCol: { value: new THREE.Color(stripeColor) }, uStripe: { value: new THREE.Vector4(...stripe) } };
+function paintShader(mat, stripeColor, stripe, damage) {
+  const U = { uStripeCol: { value: new THREE.Color(stripeColor) }, uStripe: { value: new THREE.Vector4(...stripe) }, uDamage: damage };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vOP;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvOP = position;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-      varying vec3 vOP; uniform vec3 uStripeCol; uniform vec4 uStripe;
+      varying vec3 vOP; uniform vec3 uStripeCol; uniform vec4 uStripe; uniform float uDamage;
       float rrLine(float v, float s){ return abs(fract(v / s + 0.5) - 0.5) * s; }
-      float rrAA(float d, float w){ float fw = fwidth(d) + 1e-4; return 1.0 - smoothstep(w - fw, w + fw, d); }`)
+      float rrAA(float d, float w){ float fw = fwidth(d) + 1e-4; return 1.0 - smoothstep(w - fw, w + fw, d); }
+      float rrH(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+      float rrN(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(rrH(i), rrH(i + vec3(1,0,0)), f.x), mix(rrH(i + vec3(0,1,0)), rrH(i + vec3(1,1,0)), f.x), f.y),
+                   mix(mix(rrH(i + vec3(0,0,1)), rrH(i + vec3(1,0,1)), f.x), mix(rrH(i + vec3(0,1,1)), rrH(i + vec3(1,1,1)), f.x), f.y), f.z); }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       float rrBand = floor(vOP.x / 1.15);
       float rrZ = vOP.z + rrBand * 0.53;
@@ -70,9 +74,25 @@ function paintShader(mat, stripeColor, stripe) {
       float rrPanel = clamp(rrP + rrRiv * 0.7, 0.0, 1.0) * rrFade;
       float rrAx = abs(vOP.x);
       float rrSt = uStripe.w * step(uStripe.z, vOP.y) * (smoothstep(uStripe.x - 0.015, uStripe.x, rrAx) - smoothstep(uStripe.y, uStripe.y + 0.015, rrAx));
+      // small access hatches between the big panels
+      vec2 rrCell = floor(vec2(vOP.x / 0.55, (vOP.z + rrBand * 0.3) / 0.8));
+      float rrHatch = step(0.86, rrH(vec3(rrCell, 3.0))) * max(rrAA(rrLine(vOP.x, 0.55), 0.01), rrAA(rrLine(vOP.z + rrBand * 0.3, 0.8), 0.01)) * rrFade;
+      rrPanel = max(rrPanel, rrHatch * 0.8);
+      // grime and worn paint: soft streaks along the flow, darker toward the tail and belly
+      float rrG = rrN(vOP * vec3(1.6, 3.0, 0.45)) * 0.6 + rrN(vOP * 6.0) * 0.4;
+      float rrWear = smoothstep(0.78, 0.97, rrN(vOP * 3.2 + 7.0)) * smoothstep(0.55, 0.8, rrN(vOP * 0.7 + 3.0));
       diffuseColor.rgb = mix(diffuseColor.rgb, uStripeCol, rrSt);
-      diffuseColor.rgb *= (1.0 - 0.45 * rrPanel) * mix(0.72, 1.0, smoothstep(-0.9, 0.4, vOP.y));`)
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + rrPanel * 0.35, 0.0, 1.0);');
+      diffuseColor.rgb *= (1.0 - 0.45 * rrPanel) * mix(0.72, 1.0, smoothstep(-0.9, 0.4, vOP.y)) * (0.93 + 0.08 * rrG);
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.55 + vec3(0.08), rrWear * 0.35);
+      float rrRough = rrG;
+      // battle damage (damage stages reference): scorched patches spread with damage, embers glow in them when badly hurt
+      float rrB = rrN(vOP * 0.9 + 11.0) * 0.65 + rrN(vOP * 3.6) * 0.35;
+      float rrBurn = smoothstep(1.02 - uDamage * 0.75, 1.1 - uDamage * 0.75, rrB);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.045, 0.04), rrBurn * 0.85);
+      float rrEmber = rrBurn * smoothstep(0.5, 0.85, uDamage) * (1.0 - smoothstep(0.0, 0.05, abs(rrN(vOP * vec3(2.2, 2.2, 1.1) + 5.0) - 0.5))); // glowing cracks
+      rrRough = mix(rrRough, 1.0, rrBurn * 0.6);`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>' + String.fromCharCode(10) + 'totalEmissiveRadiance += vec3(1.0, 0.38, 0.06) * rrEmber * 2.5;')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + rrPanel * 0.35 + (rrRough - 0.5) * 0.18, 0.04, 1.0);');
   };
   mat.customProgramCacheKey = () => 'rr-paint';
   return mat;
@@ -81,11 +101,13 @@ function paintShader(mat, stripeColor, stripe) {
 export function makeMaterials(liv, finishKey = 'gloss', meta = {}, ao = null) {
   const fin = FINISHES.find(f => f.key === finishKey) || FINISHES[0];
   const withAO = (m) => { if (ao) { m.aoMap = ao; m.aoMapIntensity = 1; } return m; };
-  const paint = (hex, stripe = [0, 0, 0, 0]) => withAO(paintShader(new THREE.MeshPhysicalMaterial({ color: hex, metalness: fin.metalness, roughness: fin.roughness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.08 }), liv.accent, stripe));
+  const damage = { value: 0 }; // shared by all painted parts of this ship
+  const paint = (hex, stripe = [0, 0, 0, 0]) => withAO(paintShader(new THREE.MeshPhysicalMaterial({ color: hex, metalness: fin.metalness, roughness: fin.roughness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.08 }), liv.accent, stripe, damage));
   const std = (color, metalness, roughness, side = THREE.FrontSide) => withAO(new THREE.MeshStandardMaterial({ color, metalness, roughness, side }));
   const neonColor = new THREE.Color(liv.neon);
   const st = meta.stripe || [0, 0, 0], band = meta.band || [0, 0];
   return {
+    damage,
     primary: paint(liv.primary, [st[0], st[1], st[2], 1]),
     secondary: paint(liv.secondary, [band[0], band[1], -10, 1]),
     accent: paint(liv.accent),
@@ -121,7 +143,7 @@ export function buildShip(shipKey, liv, finish = 'gloss', number = ++racerNum) {
   const meta = D.meta;
   const M = makeMaterials(liv, finish, meta, D.ao);
   const g = new THREE.Group(); const body = new THREE.Group(); g.add(body);
-  const refs = { flames: [], glows: [], turbines: [], lights: [], mats: M };
+  const refs = { flames: [], glows: [], turbines: [], lights: [], mats: M, exits: (meta.engines || []).map(e => V(...e.exit)), setDamage: (d) => { M.damage.value = d; } };
   for (const p of D.parts) {
     const mesh = new THREE.Mesh(p.geo, M[p.role] || M.dark);
     const lit = !['neon', 'core', 'glass', 'warm'].includes(p.role); mesh.castShadow = lit; mesh.receiveShadow = lit;
@@ -152,7 +174,7 @@ export function buildShip(shipKey, liv, finish = 'gloss', number = ++racerNum) {
   }
   // shield bubble
   const shield = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
-    uniforms: { uColor: { value: new THREE.Color(0x4cf0ff) }, uA: { value: 0 }, uTime: { value: 0 } },
+    uniforms: { uColor: { value: new THREE.Color(0x3d8bff) }, uA: { value: 0 }, uTime: { value: 0 } },
     vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP; void main(){ vN = normalize(normalMatrix*normal); vec4 mv = modelViewMatrix*vec4(position,1.0); vV = normalize(-mv.xyz); vP=position; gl_Position = projectionMatrix*mv; }`,
     fragmentShader: `uniform vec3 uColor; uniform float uA; uniform float uTime; varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main(){ float f = pow(1.0-abs(dot(vN,vV)),2.5); float hex = step(0.92, fract(vP.y*6.0+uTime)) + step(0.94, fract(atan(vP.z,vP.x)*4.0)); float a=(f*0.9+hex*0.25+0.04)*uA; gl_FragColor=vec4(uColor*a*1.8,a); }`,
@@ -177,4 +199,57 @@ export function updateShipFx(ship, time, power, opts = {}) {
   if (r.emitter) r.emitter.scale.setScalar(0.85 + Math.sin(time * 14) * 0.15 + (opts.overload ? 0.5 : 0));
   r.shield.visible = (opts.shield || 0) > 0.01;
   r.shield.material.uniforms.uA.value = opts.shield || 0; r.shield.material.uniforms.uTime.value = time;
+}
+
+// ---------------- breakup (damage stage 04) ----------------
+// Split every part of the airframe into nose / tail / left wing / right wing by triangle position,
+// once per airframe; wrecks reuse the dying ship's own materials.
+const WRECK = {};
+function wreckParts(key) {
+  if (WRECK[key]) return WRECK[key];
+  const D = MODELS[key], regions = { N: [], T: [], L: [], R: [] };
+  const region = (x, z) => (x > 2.4 ? 'L' : x < -2.4 ? 'R' : z > 1.2 ? 'N' : 'T');
+  for (const p of D.parts) {
+    const g = p.geo.index ? p.geo.toNonIndexed() : p.geo;
+    const pos = g.attributes.position, nrm = g.attributes.normal, uv = g.attributes.uv;
+    const bins = { N: [[], [], []], T: [[], [], []], L: [[], [], []], R: [[], [], []] };
+    for (let i = 0; i < pos.count; i += 3) {
+      const cx = (pos.getX(i) + pos.getX(i + 1) + pos.getX(i + 2)) / 3, cz = (pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2)) / 3;
+      const b = bins[region(cx, cz)];
+      for (let k = 0; k < 3; k++) {
+        b[0].push(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k));
+        b[1].push(nrm.getX(i + k), nrm.getY(i + k), nrm.getZ(i + k));
+        if (uv) b[2].push(uv.getX(i + k), uv.getY(i + k));
+      }
+    }
+    for (const r in bins) {
+      const [P, N, U] = bins[r]; if (!P.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+      if (U.length) geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+      regions[r].push({ geo, role: p.role });
+    }
+  }
+  const out = [];
+  for (const r in regions) {
+    if (!regions[r].length) continue;
+    const box = new THREE.Box3(); for (const q of regions[r]) { q.geo.computeBoundingBox(); box.union(q.geo.boundingBox); }
+    const c = box.getCenter(new THREE.Vector3());
+    for (const q of regions[r]) q.geo.translate(-c.x, -c.y, -c.z);
+    out.push({ region: r, center: c, parts: regions[r] });
+  }
+  return (WRECK[key] = out);
+}
+// pieces of `ship` positioned in the ship's body frame; caller adds them to a group placed at the ship
+export function buildWreck(ship) {
+  const M = ship.userData.refs.mats;
+  return wreckParts(ship.userData.key).map(({ region, center, parts }) => {
+    const g = new THREE.Group();
+    for (const q of parts) { const m = new THREE.Mesh(q.geo, M[q.role] || M.dark); m.castShadow = !['neon', 'core', 'glass', 'warm'].includes(q.role); g.add(m); }
+    g.position.copy(center);
+    const out = region === 'L' ? 1 : region === 'R' ? -1 : 0;
+    const vel = new THREE.Vector3(out * (8 + Math.random() * 8) + (Math.random() - 0.5) * 4, 4 + Math.random() * 8, region === 'N' ? 30 + Math.random() * 15 : region === 'T' ? -6 + Math.random() * 6 : 10 + Math.random() * 10);
+    const spin = new THREE.Vector3((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6 + out * 3);
+    return { g, vel, spin, region };
+  });
 }
