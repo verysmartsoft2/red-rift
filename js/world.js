@@ -281,9 +281,10 @@ function buildArches(group, rockMat) {
 }
 
 export function buildSpireGeometry(seed, radius, height) {
-  let geo = new THREE.CylinderGeometry(radius * 0.55, radius * 1.15, height, 10, 12);
+  let geo = new THREE.CylinderGeometry(radius * 0.55, radius * 1.15, height, 14, 16);
   geo.translate(0, height / 2, 0);
-  geo = geo.toNonIndexed();
+  geo.deleteAttribute('normal'); geo.deleteAttribute('uv');
+  geo = mergeVertices(geo); // smooth shading, as the arches and walls (flat facets read as low-poly)
   const p = geo.attributes.position, v = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i);
@@ -405,7 +406,8 @@ function buildWreckRibs(group) {
   const lampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff5a2a).multiplyScalar(2.4) });
   const r = rng(11);
   const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(5, 2.2, 13), stringerMat, FEATURES.ribs.length * 14);
-  const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(3, 3, 3), lampMat, FEATURES.ribs.length * 5);
+  const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(2, 2, 2), lampMat, FEATURES.ribs.length * 3);
+  const housings = new THREE.InstancedMesh(new THREE.BoxGeometry(2.8, 2.8, 2.8), mat, FEATURES.ribs.length * 3);
   const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), v4 = new THREE.Vector3(), sc4 = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
   let nf = 0, nl = 0;
   for (const rib of FEATURES.ribs) {
@@ -433,10 +435,12 @@ function buildWreckRibs(group) {
       frames.setColorAt(nf++, col.setHSL(0.05 + r() * 0.03, 0.35 + r() * 0.2, 0.26 + r() * 0.14));
     }
     sc4.set(1, 1, 1);
-    for (let k = 0; k < 5; k++) {
+    for (let k = 0; k < 3; k++) {
       const a = 0.35 + r() * (Math.PI - 0.7);
-      v4.set(Math.cos(a) * (rib.r - 5.5), Math.sin(a) * (rib.r - 5.5), 0).applyMatrix4(m.matrixWorld);
-      m4.compose(v4, m.quaternion, sc4); lamps.setMatrixAt(nl++, m4);
+      v4.set(Math.cos(a) * (rib.r - 5.7), Math.sin(a) * (rib.r - 5.7), 0).applyMatrix4(m.matrixWorld);
+      m4.compose(v4, m.quaternion, sc4); lamps.setMatrixAt(nl, m4);
+      v4.set(Math.cos(a) * (rib.r - 4.6), Math.sin(a) * (rib.r - 4.6), 0).applyMatrix4(m.matrixWorld);
+      m4.compose(v4, m.quaternion, sc4); housings.setMatrixAt(nl++, m4);
     }
     // hanging hull plates on some ribs
     if (r() < 0.6) {
@@ -446,7 +450,7 @@ function buildWreckRibs(group) {
       pl.position.set(f.p.x, floor, f.p.z); pl.castShadow = true; group.add(pl);
     }
   }
-  frames.count = nf; lamps.count = nl; frames.castShadow = true; group.add(frames, lamps);
+  frames.count = nf; lamps.count = nl; housings.count = nl; frames.castShadow = true; group.add(frames, lamps, housings);
   // spine beam along the top
   frameAt(FEATURES.wreckS, f);
   const spine = new THREE.Mesh(new THREE.BoxGeometry(8, 8, 300), mat);

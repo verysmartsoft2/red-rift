@@ -32,7 +32,8 @@ vec3 rockColor(vec3 p, vec3 n){
   gSalt = salt;
   if (salt < 0.002) return base;
   // irregular polygon cells (voronoi edges), cracks of varying width with a bright raised rim
-  vec2 sq = p.xz * 0.05 + vec2(vnoise(p * 0.02), vnoise(p * 0.02 + 5.0)) * 0.7;
+  float sd = length(p.xz - uSalt.xy);
+  vec2 sq = p.xz * mix(0.1, 0.05, smoothstep(120.0, 520.0, sd)) + vec2(vnoise(p * 0.02), vnoise(p * 0.02 + 5.0)) * 0.7;
   vec2 si = floor(sq), sf = fract(sq); float d1 = 8.0, d2 = 8.0;
   for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
     vec2 g = vec2(float(i), float(j));
@@ -48,9 +49,32 @@ vec3 rockColor(vec3 p, vec3 n){
   vec3 saltC = vec3(1.05, 1.0, 0.92) * (0.93 + 0.07 * vnoise(p * 0.15));
   saltC = mix(saltC, vec3(1.15, 1.1, 1.02), rim * 0.6);
   saltC = mix(saltC, vec3(0.45, 0.38, 0.3), crack * 0.8);
+  { // fine crazing inside each plate
+    vec2 fq = p.xz * 0.42 + vec2(vnoise(p * 0.11), vnoise(p * 0.11 + 9.0)) * 0.6;
+    vec2 fi = floor(fq), ff = fract(fq); float e1 = 8.0, e2 = 8.0;
+    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 o = vec2(hash3(vec3(fi + g, 3.3)), hash3(vec3(fi + g, 7.7)));
+      vec2 rr = g + o - ff; float d = dot(rr, rr);
+      if (d < e1) { e2 = e1; e1 = d; } else if (d < e2) e2 = d;
+    }
+    float fine = 1.0 - smoothstep(0.02, 0.07, sqrt(e2) - sqrt(e1));
+    saltC *= 1.0 - fine * 0.22 * (1.0 - crack);
+  }
   return mix(base, saltC, salt);
 }
 `;
+
+// screen-space bump (perturbNormalArb) from world noise: rock grain and ledges at metre scale, fading out with distance
+const ROCK_BUMP = `{
+  float bh = fbm3(vWPos * 0.16) * 2.2 + vnoise(vWPos * 0.6) * 0.45 + vnoise(vec3(vWPos.x * 0.05, vWPos.y * 0.9, vWPos.z * 0.05)) * 0.8;
+  vec3 dpx = dFdx(-vViewPosition), dpy = dFdy(-vViewPosition);
+  float dhx = dFdx(bh), dhy = dFdy(bh);
+  vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx); float det = dot(dpx, r1);
+  float fade = 1.0 - smoothstep(60.0, 260.0, length(vViewPosition));
+  vec3 grad = sign(det) * (dhx * r1 + dhy * r2) * fade * (1.0 - gSalt);
+  normal = normalize(abs(det) * normal - grad);
+}`;
 
 // Rock / terrain material: strata by world height + sand on flats; optional tunnel-mouth holes.
 export function makeRockMaterial({ portals = null, tint = 1 } = {}) {
@@ -73,6 +97,7 @@ export function makeRockMaterial({ portals = null, tint = 1 } = {}) {
         { vec3 d = vWPos-uPortA; float al = dot(d,uDirA); if (abs(al)<46.0 && length(d-al*uDirA)<uPR) discard; }
         { vec3 d = vWPos-uPortB; float al = dot(d,uDirB); if (abs(al)<46.0 && length(d-al*uDirB)<uPR) discard; }`)
       .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= rockColor(vWPos, normalize(vWNrm)) * uTint;')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + ROCK_BUMP)
       .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(1.35, 1.75, 0.55), gSalt); // salt: the violet sky fill turns neutral');
   };
   return m;
