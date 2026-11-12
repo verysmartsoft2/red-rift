@@ -1,5 +1,5 @@
 // Race simulation (DOM-free, fixed 60 Hz). Racers, weapons, items, obstacles, AI.
-import { TRACK, FEATURES, RANGES, bounds, wrapS, idx, frameAt, newFrame, typeAt, ridgeAt, ridgeHalf, TUNNEL_R } from './track.js';
+import { TRACK, FEATURES, RANGES, RIB_LONG, bounds, wrapS, idx, frameAt, newFrame, typeAt, ridgeAt, ridgeHalf, TUNNEL_R } from './track.js';
 import { RACE, SHIPS, LASERS, MISSILES, ITEMS, AI_LEVELS, AI_NAMES, SHIP_LIVERIES } from './config.js';
 import { clamp } from './noise.js';
 
@@ -203,7 +203,7 @@ export class Race {
     }
     // the split ridge in the middle of the canyon is solid rock
     const rw = ridgeAt(s);
-    const rwc = rw > 0 ? ridgeHalf(s, r.y, b.yMin) + 2 : 0; // same shape as the ridge mesh
+    const rwc = rw > 0 ? ridgeHalf(s, r.y, b.yMin, b.yMax) + 2 : 0; // same shape as the ridge mesh (low spur at the ends: fly over it)
     if (rw > 0 && Math.abs(r.x) < rwc) { const sg = Math.sign(r.x) || (r.id % 2 ? 1 : -1); r.x = sg * rwc; r.vx = sg * Math.max(Math.abs(r.vx), 6); nx = sg; scraped = true; }
     if (scraped && F.phase <= 0) {
       r.scrape += dt; this.damage(r, RACE.wallDamage * dt, null, 'wall'); r.speed *= 1 - 0.6 * dt;
@@ -254,10 +254,12 @@ export class Race {
     const i = idx(s); const cy = TRACK.py[i];
     for (const rib of FEATURES.ribs) {
       const d = dS(s, rib.s);
-      if (Math.abs(d) < 6) {
+      if (Math.abs(d) < 18) {
         const wy = cy + r.y;
         const dd = Math.hypot(r.x, wy - rib.floor);
-        if (Math.abs(dd - rib.r) < 7) {
+        let solid = Math.abs(d) < 6 && Math.abs(dd - rib.r) < 7;
+        if (!solid && Math.abs(dd - rib.r - 5.5) < 4.5) { const th = Math.atan2(wy - rib.floor, r.x) - (rib.tilt || 0); solid = RIB_LONG.some(a => Math.abs(th - a) * dd < 4); } // the long stringers that join the ribs
+        if (solid) {
           const out = dd > rib.r ? 1 : -1; const k = (rib.r + out * 9) / dd;
           r.x *= k; r.y = (rib.floor + (wy - rib.floor) * k) - cy; r.speed *= 0.6;
           this.damage(r, RACE.crashDamage * 0.8, null, 'crash'); this.emit({ type: 'crash', r: r.id, s, x: r.x, y: r.y });
@@ -436,7 +438,7 @@ export class Race {
     // march forward until the corridor ends (wall/arch)
     for (let d = 10; d < range; d += 20) {
       const b = bounds(wrapS(s + d));
-      if ((b.tunnel ? Math.hypot(x, y) > b.hw : (Math.abs(x) > b.hw || y < b.yMin || y > b.yMax)) || Math.abs(x) < ridgeAt(wrapS(s + d))) return { s: wrapS(s + d), x, y, wall: true };
+      if ((b.tunnel ? Math.hypot(x, y) > b.hw : (Math.abs(x) > b.hw || y < b.yMin || y > b.yMax)) || Math.abs(x) < ridgeHalf(wrapS(s + d), y, b.yMin, b.yMax)) return { s: wrapS(s + d), x, y, wall: true };
     }
     return { s: wrapS(s + range), x, y, wall: false };
   }
@@ -460,7 +462,7 @@ export class Race {
       }
       if (hit) continue;
       const bd = bounds(b.s);
-      const out = (bd.tunnel ? Math.hypot(b.x, b.y) > bd.hw + 4 : (Math.abs(b.x) > bd.hw + 8 || b.y < bd.yMin - 4)) || Math.abs(b.x) < ridgeAt(b.s);
+      const out = (bd.tunnel ? Math.hypot(b.x, b.y) > bd.hw + 4 : (Math.abs(b.x) > bd.hw + 8 || b.y < bd.yMin - 4)) || Math.abs(b.x) < ridgeHalf(b.s, b.y, bd.yMin, bd.yMax);
       if (out) {
         let nx = 0, ny = 0;
         if (bd.tunnel) { const rr = Math.hypot(b.x, b.y); nx = -b.x / rr; ny = -b.y / rr; } else if (b.y < bd.yMin - 4) ny = 1; else nx = -Math.sign(b.x);
@@ -523,7 +525,7 @@ export class Race {
       }
       const b = bounds(m.s);
       if (!boom && (b.tunnel ? Math.hypot(m.x, m.y) > b.hw - 2 : (Math.abs(m.x) > b.hw + 6 || m.y < b.yMin - 3))) boom = true;
-      if (!boom && Math.abs(m.x) < ridgeAt(m.s)) boom = true;
+      if (!boom && Math.abs(m.x) < ridgeHalf(m.s, m.y, b.yMin, b.yMax)) boom = true;
       if (!boom) for (const sp of this.spires) { if (sp.alive && Math.abs(dS(sp.s, m.s)) < sp.radius + 3 && Math.abs(sp.x - m.x) < sp.radius + 2 && m.y < sp.topY) { boom = true; break; } }
       if (!boom) for (const a of FEATURES.arches) { if (Math.abs(dS(m.s, a.s)) < a.thick && Math.abs(Math.hypot(m.x, m.y - a.yc) - a.Ra) < a.thick) { boom = true; break; } }
       if (boom) { this.explode(m, m.s, m.x, m.y); continue; }
@@ -638,10 +640,13 @@ export class Race {
       A.railHold = !!tgt && R() < 0.25 + A.aggro * 0.55;
     }
     let tx = A.tx, ty = A.ty;
+    // inside the wreck the line is held within the ribs: the spire dodge must pick a side that fits there
+    let lim = b.hw - 8;
+    for (const rib of FEATURES.ribs) { const d = dS(rib.s, s); if (d > -5 && d < 200) lim = Math.min(lim, rib.r * 0.5); }
     // obstacle avoidance (always reactive)
     for (const sp of this.spires) {
       if (!sp.alive) continue; const d = dS(sp.s, s);
-      if (d > 0 && d < 160 && (Math.abs(tx - sp.x) < sp.radius + 14 || Math.abs(r.x - sp.x) < sp.radius + 12)) { tx = sp.x + (r.x > sp.x ? 1 : -1) * (sp.radius + 18); if (Math.abs(tx) > b.hw - 8) tx = sp.x - Math.sign(tx - sp.x) * (sp.radius + 18); }
+      if (d > 0 && d < 160 && (Math.abs(tx - sp.x) < sp.radius + 14 || Math.abs(r.x - sp.x) < sp.radius + 12)) { tx = sp.x + (r.x > sp.x ? 1 : -1) * (sp.radius + 18); if (Math.abs(tx) > lim) tx = sp.x - Math.sign(tx - sp.x) * (sp.radius + 18); }
     }
     for (const a of FEATURES.arches) { const d = dS(a.s, s); if (d > -5 && d < 160) ty = Math.min(ty, a.y - a.thick - 14); }
     const cy = TRACK.py[idx(s)];

@@ -1,7 +1,7 @@
 // Closed race loop through the desert. Everything in the race lives in "track space":
 // s = distance along centreline (m), x = lateral offset (+right), y = vertical offset (+up).
 import * as THREE from 'three';
-import { rng, clamp } from './noise.js';
+import { rng, clamp, noise2, lerp, smooth } from './noise.js';
 
 export const S = 1.87; // map scale: gives an ~18 km lap
 // x, z, centreY, halfWidth, halfHeight, sector
@@ -38,10 +38,10 @@ const RAW = [
   [-590, 100, 70, 95, 60, 'dunes'],
   // serpentine climb: five switchbacks up to the plateau
   [-770, -60, 74, 80, 70, 'climb'],
-  [-1100, -50, 104, 64, 70, 'climb'],
-  [-1240, -250, 142, 60, 70, 'climb'],
-  [-1050, -440, 182, 60, 70, 'climb'],
-  [-1170, -660, 222, 62, 70, 'climb'],
+  [-1100, -50, 92, 64, 70, 'climb'], // gentle at the foot, steep in the middle (~11%), easing onto the plateau
+  [-1240, -250, 138, 60, 70, 'climb'],
+  [-1050, -440, 190, 60, 70, 'climb'],
+  [-1170, -660, 234, 62, 70, 'climb'],
   [-920, -830, 262, 90, 70, 'start'],
   [-460, -1040, 292, 95, 70, 'start'],
 ];
@@ -137,6 +137,8 @@ function buildTrack() {
   { const tun = TYPES.indexOf('tunnel');
     for (let i = 0; i < n; i++) if (T.type[i] === tun && T.type[(i + 1) % n] !== tun)
       for (let j = 1; j <= 70; j++) { const q = (i + j) % n; T.floorY[q] = Math.max(T.floorY[q], T.py[q] - 51 - j * DS * 0.8); } }
+  // the flight floor never climbs steeper than 30 % (the gorge -> valley step was a 0.7 ramp the ground could not follow)
+  for (let pass = 0; pass < 2; pass++) for (let i = n - 1; i >= 0; i--) { const nx = T.floorY[(i + 1) % n]; if (T.floorY[i] < nx - 0.3 * DS) T.floorY[i] = nx - 0.3 * DS; }
   // sector starts
   for (let i = 0; i < n; i++) {
     const ty = T.type[i], pt = T.type[(i - 1 + n) % n];
@@ -269,12 +271,29 @@ export function ridgeAt(s) {
   return R.w * Math.pow(Math.sin(Math.PI * t), 0.55);
 }
 
+// the ridge crest (track-space y): cap = where the sheer wall ends, top = tip of the fangs.
+// Mid-ridge the cap is above the flight ceiling; over the first/last 160 m it sinks to a low spur,
+// so the ends rise out of the floor instead of standing as a full-height card edge. Shared by collision and the mesh.
+export function ridgeCrest(s, yMin, yMax) {
+  const R = RIDGE, ss = wrapS(s), rw = ridgeAt(s);
+  const k = smooth(0, 220, Math.min(ss - R.s0, R.s1 - ss));
+  const cap = lerp(yMin + 16, yMax + 4, k);
+  const fang = 30 + 80 * Math.pow(1 - Math.abs(noise2(ss * 0.011, 1.7)), 3) + 25 * Math.pow(1 - Math.abs(noise2(ss * 0.037, 4.1)), 6);
+  // where the rock is still thin, keep the crest low: no paper-thin blades sticking up from the spur
+  return { cap, top: cap + fang * Math.min(1, rw / 10 + 0.25) * (0.3 + 0.7 * k) * (0.15 + 0.85 * smooth(6, 24, rw)) };
+}
+
 // half width of the ridge rock at height y (track space): shared by collision and the ridge mesh
-export function ridgeHalf(s, y, yMin) {
+export function ridgeHalf(s, y, yMin, yMax = yMin + 200) {
   const rw = ridgeAt(s); if (rw <= 0) return 0;
+  const { cap, top } = ridgeCrest(s, yMin, yMax);
+  if (y > cap) { const t = (y - cap) / Math.max(1, top - cap); return t >= 1 ? 0 : rw * (1 - Math.pow(t, 1.5) * 0.9); } // crest narrows to the fang tips
   return rw + Math.max(0, 10 * (1 - (y - yMin) / 24)) * Math.min(1, rw / 8); // the foot spreads near the floor
 }
 export const TUNNEL_R = 46 - 7; // flyable radius of the tube
+// wreck ribs carry 14 stringers each; these three run the full 34 m to the next rib (mesh + collision)
+export const RIB_STRINGERS = 14, RIB_LONG_K = [3, 7, 10];
+export const RIB_LONG = RIB_LONG_K.map(k => 0.12 + (k / (RIB_STRINGERS - 1)) * (Math.PI - 0.24));
 
 export function clampToBounds(s, x, y) {
   const b = bounds(s);

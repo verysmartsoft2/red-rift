@@ -195,7 +195,7 @@ function buildMenu() {
   GFX.forEach((g, i) => { const b = el('button', i === S.gfx ? 'on' : '', g.name); b.onclick = () => { S.gfx = i; save(); applyGfx(); buildMenu(); }; gl.appendChild(b); });
   $('pilotName').value = S.name;
   $('startBtn').textContent = net.role === 'client' ? 'ЖДЁМ ХОЗЯИНА' : net.role === 'host' && mp.guests.size ? 'НА СТАРТ · ОНЛАЙН' : 'НА СТАРТ';
-  if (net.role === 'client') net.send({ t: 'hello', p: profile() }); // keep the host's copy of our ship and paint current
+  if (net.role === 'client') { const pj = JSON.stringify(profile()); if (pj !== mp.lastHello) { mp.lastHello = pj; net.send({ t: 'hello', p: profile() }); } } // only when ship, paint or name changed (no echo loop with the lobby)
 }
 $('pilotName').addEventListener('input', e => { S.name = (e.target.value || 'ПИЛОТ').toUpperCase().slice(0, 12); save(); });
 document.addEventListener('click', () => { $('swatchPop').hidden = true; });
@@ -306,13 +306,15 @@ function renderLobby(list) {
   buildMenu();
 }
 function hostLobby() { const list = [profile(), ...mp.guests.values()]; renderLobby(list); net.send({ t: 'lobby', list }); }
-function botTakeover(idx, why) {
+function botTakeover(idx, why, afk = false) {
   const r = race && race.racers[idx]; if (!r || !r.remote) return;
-  r.remote = false; r.net = null; r.ai = { ...race.level, steer: 0, climb: 0, jink: 1, fireHold: 0, think: 0, tx: 0, ty: 0 };
+  r.remote = false; r.net = null; r._afk = afk; r.ai = { ...race.level, steer: 0, climb: 0, jink: 1, fireHold: 0, think: 0, tx: 0, ty: 0 };
   if (mode === 'race') feed(r.name + ' ' + why + ' — его ведёт бот');
 }
 function hostSend(force) {
   const now = performance.now();
+  // a guest still connected but not flying (its tab is in the background) gets a bot until its controls come back
+  for (const [, idx] of mp.seats) { const r = race.racers[idx]; if (r && r.remote && race.started && r._seen && now - r._seen > 5000) botTakeover(idx, 'не отвечает', true); }
   if (!force && now - mp.lastSnap < 50) return;
   mp.lastSnap = now; net.send(snapshot(race, mp.outbox)); mp.outbox = [];
 }
@@ -353,10 +355,11 @@ net.on('msg', (d, from) => {
   if (net.role === 'host') mp.seen.set(from, performance.now()); else mp.hostSeen = performance.now();
   if (d.t === 'ping') return;
   if (net.role === 'host') {
-    if (d.t === 'hello') { d.p.name = uniqueName(String(d.p.name || 'ПИЛОТ').slice(0, 12), from); mp.guests.set(from, d.p); hostLobby(); mpStatus('В комнате пилотов: ' + (mp.guests.size + 1) + ' из 3'); }
+    if (d.t === 'hello') { d.p.name = uniqueName(String(d.p.name || 'ПИЛОТ').slice(0, 12), from); const prev = mp.guests.get(from); if (prev && JSON.stringify(prev) === JSON.stringify(d.p)) return; mp.guests.set(from, d.p); hostLobby(); mpStatus('В комнате пилотов: ' + (mp.guests.size + 1) + ' из 3'); }
     else if (d.t === 'quit') { const idx = mp.seats.get(from); if (idx != null) { botTakeover(idx, 'ушёл в ангар'); mp.seats.delete(from); } }
     else if (d.t === 'i' && race) {
-      const r = race.racers[mp.seats.get(from)]; if (!r || !r.remote) return;
+      const r = race.racers[mp.seats.get(from)]; if (!r) return;
+      if (!r.remote) { if (!r._afk) return; r.remote = true; r.ai = null; r._afk = false; if (mode === 'race') feed(r.name + ' снова у штурвала'); } // back from a background tab
       r.input.steer = d.steer; r.input.climb = d.climb; r.input.fire = d.fire; r.input.brake = d.brake;
       if (d.m > (r._m || 0)) r.input.missile = true; if (d.e > (r._e || 0)) r.input.item = true; if (d.q > (r._q || 0)) r.input.ability = true;
       r._m = d.m; r._e = d.e; r._q = d.q; r._seen = performance.now();
@@ -393,7 +396,7 @@ $('mpHost').onclick = async () => {
 $('mpJoin').onclick = async () => {
   const code = $('mpCode').value.trim().toUpperCase(); if (code.length < 4) { mpStatus('Введите код комнаты'); return; }
   audio.init(); mpStatus('Подключаемся к комнате ' + code + '…');
-  try { await net.join(code); mp.hostSeen = performance.now(); net.send({ t: 'hello', p: profile() }); mpStatus('Подключено. Ждём хозяина…'); $('mpLink').hidden = true; renderLobby([]); }
+  try { await net.join(code); mp.hostSeen = performance.now(); mp.lastHello = JSON.stringify(profile()); net.send({ t: 'hello', p: profile() }); mpStatus('Подключено. Ждём хозяина…'); $('mpLink').hidden = true; renderLobby([]); }
   catch (e) { mpStatus('Не удалось войти: ' + (e.message || e.type || e)); net.leave(); renderLobby([]); }
 };
 $('mpLeave').onclick = () => { if (net.role === 'host') net.send({ t: 'end' }); net.leave(); mp.guests.clear(); mp.seats.clear(); $('mpLink').hidden = true; renderLobby([]); mpStatus('Вы вышли из комнаты'); };
@@ -513,7 +516,7 @@ function slowmo(scale, dur) { if (net.role) return; // no slow-motion online: ev
  if (scale < slowScale || slowT <= 0) { slowScale = scale; } slowT = Math.max(slowT, dur); }
 
 // ---------------- events -> fx/audio/HUD ----------------
-const tv = new THREE.Vector3(), tv2 = new THREE.Vector3(), nf = newFrame();
+const tv = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3(), camShip = new THREE.Vector3(), nf = newFrame();
 function worldNormal(s, nx, ny) { frameAt(s, nf); return new THREE.Vector3().addScaledVector(nf.r, nx).addScaledVector(nf.u, ny).normalize(); }
 // positional one-shot: distance from the camera dulls the sound, the side of the screen pans it
 const _sv = new THREE.Vector3(), _right = new THREE.Vector3();
@@ -660,8 +663,10 @@ function updateWrecks(dt) {
 // ---------------- visuals ----------------
 const f0 = newFrame();
 let gtime = 0;
+let novaGlare = 0; const novaSeg = new THREE.Line3(); // 0..1: how close a rival's NOVA passes the lens (dims the beam and the bloom)
 function updateRaceVisuals(dt, rdt) {
   gtime += dt;
+  novaGlare = 0;
   const P = race.player;
   race.racers.forEach((r, i) => {
     const m = shipMeshes[i];
@@ -680,7 +685,9 @@ function updateRaceVisuals(dt, rdt) {
     updateShipFx(m, gtime, power, { shield: (r.shield > 0 ? 0.55 : 0) + (r.dome > 0 ? 0.9 : 0), overload: r.fx.overload > 0 });
     const hpF = r.hp / r.maxHp;
     m.userData.refs.setDamage(Math.max(0, Math.min(1, 1 - hpF)));
-    if (r !== P || Math.random() < 0.35) fx.damageSmoke(r === P ? tv2.copy(pos).addScaledVector(f0.t, -6) : pos, hpF, dt); // own smoke thinner and behind, so it does not flood the camera
+    // own smoke rides with the ship (carried velocity + drag), so it trails just behind it in the chase view without flooding the lens
+    if (r !== P) fx.damageSmoke(pos, hpF, dt);
+    else if (Math.random() < 0.6) fx.damageSmoke(tv2.copy(pos).addScaledVector(f0.t, -2.5), hpF, dt, tv3.copy(f0.t).multiplyScalar(r.speed));
     if (hpF < 0.35) for (const ex of m.userData.refs.exits) { // engine failure: fire and black smoke from the nozzles
       if (Math.random() < dt * 14) { const wp = m.userData.body.localToWorld(ex.clone()); fx.add.emit(wp, new THREE.Vector3((Math.random() - 0.5) * 3, 1.5, (Math.random() - 0.5) * 3), new THREE.Color(0.95, 0.4, 0.08), 1.1, 0.2, { grow: 1 }); if (Math.random() < 0.5) fx.smoke.emit(wp, new THREE.Vector3(0, 3, 0), new THREE.Color(0x141210), 2.2, 1.6, { grow: 6, alpha: 0.6 }); }
     }
@@ -716,8 +723,10 @@ function updateRaceVisuals(dt, rdt) {
     }
     if (r.fx.nova > 0 && r.novaEnd) {
       const end = toWorld(r.novaEnd.s, r.novaEnd.x, r.novaEnd.y, new THREE.Vector3());
-      fx.setBeam('n' + i, nose, end, '#ffc24a', (r === P ? 9 : 5) + Math.sin(gtime * 40) * 1.5);
-      fx.setBeam('nc' + i, nose, end, '#ffffff', 3);
+      let wk = 1; // a rival's beam passing right by the camera used to white out the whole screen
+      if (r !== P) { novaSeg.set(nose, end); const d = novaSeg.closestPointToPoint(camera.position, true, tv2).distanceTo(camera.position); wk = THREE.MathUtils.clamp((d - 3) / 35, 0.2, 1); novaGlare = Math.max(novaGlare, 1 - wk); }
+      fx.setBeam('n' + i, nose, end, '#ffc24a', ((r === P ? 9 : 5) + Math.sin(gtime * 40) * 1.5) * wk);
+      fx.setBeam('nc' + i, nose, end, '#ffffff', 3 * wk);
       fx.sparks(end, tv2.subVectors(nose, end).normalize(), 6, 0xffc24a, 80);
       if (r === P) hitShake = Math.max(hitShake, 0.25);
     }
@@ -771,7 +780,9 @@ function placeCamera(P, dt, snap = false) {
     } else {
       const back = camMode === 1 ? 34 : camMode === 2 ? -2 : 21;
       const up = camMode === 1 ? 9 : camMode === 2 ? 1.6 : 5.5;
-      const target = toWorld(s - back, P.x * (camMode === 2 ? 1 : 0.88), P.y + up, tv);
+      let bk = back; const lx = P.x * (camMode === 2 ? 1 : 0.88);
+      if (camMode !== 2) { camShip.copy(toWorld(s, P.x, P.y, tv)); const want = Math.hypot(back, up - 1); for (let it = 0; it < 3; it++) { const d = toWorld(s - bk, lx, P.y + up, tv).distanceTo(camShip); bk = Math.min(back * 2.2, Math.max(back * 0.45, bk * want / Math.max(1, d))); } }
+      const target = toWorld(s - bk, lx, P.y + up, tv);
       if (snap) camera.position.copy(target);
       else {
         const k = camMode === 2 ? 1 : Math.min(1, dt * 9);
@@ -989,7 +1000,7 @@ function loop() {
     return;
   }
   if (camera.view && camera.view.enabled) camera.clearViewOffset();
-  renderer.toneMappingExposure = 1.0; bloom.strength = GFX[S.gfx].bloom; bloom.threshold = 0.82;
+  renderer.toneMappingExposure = 1.0; bloom.strength = GFX[S.gfx].bloom * (1 - 0.55 * novaGlare); bloom.threshold = 0.82;
   if (mode === 'race' && paused) {
     const gp = navigator.getGamepads ? [...navigator.getGamepads()].find(g => g) : null;
     const st = gp && gp.buttons[9] && gp.buttons[9].pressed;

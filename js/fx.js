@@ -203,10 +203,15 @@ export class FX {
     sp.mesh.visible = false;
     this.shake = Math.max(this.shake, 1);
   }
-  damageSmoke(p, hpFrac, dt) {
+  damageSmoke(p, hpFrac, dt, carry = null) {
     if (hpFrac > 0.6) return;
     const rate = hpFrac < 0.3 ? 40 : 14;
-    if (Math.random() < rate * dt) this.smoke.emit(p, rv(3), new THREE.Color(0x2a2522), 3.6, 1.8, { grow: 7, alpha: 0.85 });
+    if (Math.random() < rate * dt) {
+      // carry = the ship's velocity: the puff leaves almost at ship speed and drag lets it fall back,
+      // so the plume stays attached to the ship (0-15 m behind) instead of being left 40 m back in one frame
+      if (carry) this.smoke.emit(p, rv(1.5).addScaledVector(carry, 0.96).add(tmp.set(0, 2.5, 0)), new THREE.Color(0x2a2522), 1.6, 1.0, { grow: 6, alpha: 0.8, drag: 2.6 });
+      else this.smoke.emit(p, rv(3), new THREE.Color(0x2a2522), 3.6, 1.8, { grow: 7, alpha: 0.85 });
+    }
     if (hpFrac < 0.3 && Math.random() < 3 * dt) this.add.emit(p, rv(2), new THREE.Color(0.9, 0.32, 0.06), 0.6, 0.15, { grow: 0.5 });
     if (hpFrac < 0.45 && Math.random() < 6 * dt) this.sparks(p, tmp.set(0, 1, 0), 4, 0xffd080, 25);
   }

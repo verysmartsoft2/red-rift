@@ -2,7 +2,7 @@
 // cliff exit, stone arches, destructible spires, flagship wreck, force fields, neon guides, sky.
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as THREE from 'three';
-import { S, ridgeAt, ridgeHalf, TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
+import { S, ridgeAt, ridgeHalf, ridgeCrest, RIB_LONG_K, TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
 import { fbm, ridged, noise2, smooth, lerp, clamp, rng } from './noise.js';
 import { makeRockMaterial, forceFieldMaterial, softTex, smokeTex } from './shaders.js';
 import { buildCapitalFleet } from './capital.js';
@@ -67,8 +67,15 @@ function computeHeightfield() {
   const fa = frameAt(t0, newFrame()), fb = frameAt(t1, newFrame());
   const H = new Float32Array(N * N);
   // lowest floor within +-30 m: on steep descents the tilted track 'down' reaches cells of the next samples
-  const floorMin = new Float32Array(T.n);
-  for (let i = 0; i < T.n; i++) { let m = 1e9; for (let j = -15; j <= 15; j++) m = Math.min(m, T.floorY[(i + j + T.n) % T.n]); floorMin[i] = m; }
+  // the track's 'down' leans with its pitch, so the flight floor of sample i lies over the ground of sample i + shift:
+  // the ground there must not be higher than that floor (and no lower than needed, or ships ride on air)
+  const floorMin = new Float32Array(T.n).fill(1e9);
+  for (let i = 0; i < T.n; i++) {
+    const yMinRel = T.floorY[i] - T.py[i] + 5, th = Math.hypot(T.tx[i], T.tz[i]) || 1;
+    const j0 = i + Math.round((T.ux[i] * T.tx[i] + T.uz[i] * T.tz[i]) / th * yMinRel / T.ds);
+    for (let j = j0 - 3; j <= j0 + 3; j++) { const q = ((j % T.n) + T.n) % T.n; floorMin[q] = Math.min(floorMin[q], T.floorY[i]); }
+  }
+  for (let i = 0; i < T.n; i++) if (floorMin[i] > 1e8) floorMin[i] = T.floorY[i];
   for (let zz = 0; zz < N; zz++) for (let xx = 0; xx < N; xx++) {
     const k = zz * N + xx;
     const x = CX - HALF + xx * cell, z = CZ - HALF + zz * cell;
@@ -262,8 +269,9 @@ function buildArches(group, rockMat) {
     frameAt(a.s, f);
     const b = bounds(a.s);
     const Ra = b.hw + 26; a.Ra = Ra; a.yc = a.y - Ra;
-    let geo = new THREE.TorusGeometry(Ra, a.thick, 14, 80, Math.PI);
-    geo = geo.toNonIndexed(); displaceGeo(geo, 5, 0.05, a.s);
+    // indexed + merged seams = smooth normals: the arch reads as weathered sandstone like the walls, not big flat facets
+    const tor = new THREE.TorusGeometry(Ra, a.thick, 20, 128, Math.PI); tor.deleteAttribute('normal'); tor.deleteAttribute('uv');
+    const geo = mergeVertices(tor); displaceGeo(geo, 5, 0.05, a.s);
     const m = new THREE.Mesh(geo, rockMat);
     m.position.copy(f.p).addScaledVector(f.u, a.yc);
     m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(f.r, f.u, f.t.clone().negate()));
@@ -339,14 +347,12 @@ function buildRidge(group, rockMat) {
   for (let k = 0; k < n; k++) {
     const s = Math.min(RG.s1, RG.s0 + k * STEP);
     frameAt(s, f);
-    const b = bounds(s), rw = ridgeAt(s);
-    const yBase = b.yMin - 24, yFoot = b.yMin + 24, yC = b.yMax + 4;
-    const fang = 30 + 80 * Math.pow(1 - Math.abs(noise2(s * 0.011, 1.7)), 3) + 25 * Math.pow(1 - Math.abs(noise2(s * 0.037, 4.1)), 6);
-    const yTop = yC + fang * Math.min(1, rw / 10 + 0.25);
+    const b = bounds(s), rw = ridgeAt(s), cr = ridgeCrest(s, b.yMin, b.yMax);
+    const yC = cr.cap, yTop = cr.top, yBase = b.yMin - 24, yFoot = Math.min(b.yMin + 24, lerp(b.yMin, yC, 0.6)); // low spur at the ends
     for (let side = 0; side < 2; side++) for (let q = 0; q < LV; q++) {
       const l = side ? LV - 1 - q : q, sg = side ? 1 : -1;
       const y = lv(l, yBase, yFoot, yC, yTop);
-      let w = y <= yC ? ridgeHalf(s, y, b.yMin) : rw * (1 - Math.pow((y - yC) / Math.max(1, yTop - yC), 1.5) * 0.9);
+      let w = y <= yC ? ridgeHalf(s, y, b.yMin, b.yMax) : rw * (1 - Math.pow((y - yC) / Math.max(1, yTop - yC), 1.5) * 0.9);
       // rough rock, displaced inward only so it never pokes out past the collision
       const rough = 0.4 + 1.3 * (0.5 + 0.5 * noise2(s * 0.05 + sg * 31, y * 0.08)) + 0.8 * (0.5 + 0.5 * noise2(s * 0.19, y * 0.27 + sg * 7));
       const ledge = 1.1 * smooth(0.55, 0.95, (y / 9) - Math.floor(y / 9));
@@ -363,17 +369,43 @@ function buildRidge(group, rockMat) {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(idxs); geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, rockMat); m.castShadow = true; m.receiveShadow = true; m.name = 'ridge';
   group.add(m);
+  // scree at both ends: fallen blocks where the spur meets the floor, kept inside the collision footprint
+  const rr = rng(23), scree = new THREE.InstancedMesh(displaceGeo(mergeVertices(new THREE.IcosahedronGeometry(1, 2)), 0.3, 1.4, 5), rockMat, 12);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3();
+  let ni = 0;
+  for (const head of [true, false]) for (let k = 0; k < 6; k++) {
+    const s = head ? RG.s0 + 20 + k * 9 : RG.s1 - 20 - k * 9;
+    const b = bounds(s);
+    // the block (radius up to ~1.3 sc after displacement) must stay inside the collision over its whole extent in s and y
+    let sc = 2.5 + rr() * 4.5, hMin = 0;
+    for (let it = 0; it < 6; it++) {
+      const e = 1.3 * sc, yTop = b.yMin + 1.4 * sc;
+      hMin = Math.min(ridgeHalf(s - e, yTop, b.yMin, b.yMax), ridgeHalf(s, yTop, b.yMin, b.yMax), ridgeHalf(s + e, yTop, b.yMin, b.yMax));
+      if (e <= hMin * 0.5) break;
+      sc *= 0.75;
+    }
+    if (1.3 * sc > hMin * 0.5 || sc < 1.5) continue;
+    frameAt(s, f);
+    const x = (rr() * 2 - 1) * (hMin - 1.3 * sc) * 0.9, y = b.yMin + sc * 0.25;
+    v.copy(f.p).addScaledVector(f.r, x).addScaledVector(f.u, y);
+    e.set(rr() * 6, rr() * 6, rr() * 6); q.setFromEuler(e);
+    m4.compose(v, q, new THREE.Vector3(sc, sc * (0.55 + rr() * 0.3), sc * (0.9 + rr() * 0.4)));
+    scree.setMatrixAt(ni++, m4);
+  }
+  scree.count = ni; scree.castShadow = true; scree.receiveShadow = true; group.add(scree);
 }
 
 function buildWreckRibs(group) {
   const f = newFrame();
   // the flagship's skeleton: rusted box-section frames with hull plates, stringers and a few lights still burning
-  const mat = new THREE.MeshStandardMaterial({ color: 0x6a3a26, metalness: 0.55, roughness: 0.78 });
-  const plate = new THREE.MeshStandardMaterial({ color: 0x4a4440, metalness: 0.65, roughness: 0.6, side: THREE.DoubleSide });
+  // low metalness + a faint rust emissive: the ribs are backlit against the dusk sky and a dark metal with no env map went black
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8a5a40, metalness: 0.2, roughness: 0.8, emissive: 0x140804 });
+  const plate = new THREE.MeshStandardMaterial({ color: 0x6a5a50, metalness: 0.3, roughness: 0.7, emissive: 0x0c0806, side: THREE.DoubleSide });
+  const stringerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.25, roughness: 0.75, emissive: 0x0c0604 }); // tinted per instance
   const lampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff5a2a).multiplyScalar(2.4) });
   const r = rng(11);
-  const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(5, 2.2, 13), plate, FEATURES.ribs.length * 14);
-  const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), lampMat, FEATURES.ribs.length * 3);
+  const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(5, 2.2, 13), stringerMat, FEATURES.ribs.length * 14);
+  const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(3, 3, 3), lampMat, FEATURES.ribs.length * 5);
   const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), v4 = new THREE.Vector3(), sc4 = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
   let nf = 0, nl = 0;
   for (const rib of FEATURES.ribs) {
@@ -385,7 +417,7 @@ function buildWreckRibs(group) {
     const fr = f.r.clone(); fr.y = 0; fr.normalize();
     const ft = new THREE.Vector3().crossVectors(fr, new THREE.Vector3(0, 1, 0)).normalize();
     const basis = new THREE.Matrix4().makeBasis(fr, new THREE.Vector3(0, 1, 0), ft);
-    m.quaternion.setFromRotationMatrix(basis); m.rotateZ(tilt);
+    m.quaternion.setFromRotationMatrix(basis); m.rotateZ(tilt); rib.tilt = tilt;
     m.position.set(f.p.x, floor, f.p.z);
     m.castShadow = true; group.add(m);
     rib.cx = f.p.x; rib.cz = f.p.z; rib.floor = floor;
@@ -395,18 +427,20 @@ function buildWreckRibs(group) {
       const a = 0.12 + (k / 13) * (Math.PI - 0.24);
       v4.set(Math.cos(a) * (rib.r + 5.5), Math.sin(a) * (rib.r + 5.5), 0).applyMatrix4(m.matrixWorld);
       q4.setFromRotationMatrix(new THREE.Matrix4().makeRotationZ(a - Math.PI / 2)).premultiply(m.quaternion);
-      sc4.set(1, 1, 0.7 + r() * 0.9); m4.compose(v4, q4, sc4); frames.setMatrixAt(nf, m4);
-      frames.setColorAt(nf++, col.setHSL(0.05 + r() * 0.03, 0.35 + r() * 0.2, 0.22 + r() * 0.12));
+      // three stringers per rib span the full 34 m rib spacing, so neighbouring ribs join into one hull line
+      const long = RIB_LONG_K.includes(k);
+      sc4.set(1, 1, long ? 2.65 : 0.6 + r() * 0.25); // short ones stay within the rib's own 12 m band m4.compose(v4, q4, sc4); frames.setMatrixAt(nf, m4);
+      frames.setColorAt(nf++, col.setHSL(0.05 + r() * 0.03, 0.35 + r() * 0.2, 0.26 + r() * 0.14));
     }
     sc4.set(1, 1, 1);
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < 5; k++) {
       const a = 0.35 + r() * (Math.PI - 0.7);
       v4.set(Math.cos(a) * (rib.r - 5.5), Math.sin(a) * (rib.r - 5.5), 0).applyMatrix4(m.matrixWorld);
       m4.compose(v4, m.quaternion, sc4); lamps.setMatrixAt(nl++, m4);
     }
     // hanging hull plates on some ribs
     if (r() < 0.6) {
-      const pl = new THREE.Mesh(new THREE.CylinderGeometry(rib.r + 3, rib.r + 3, 26, 24, 1, true, 0, 0.6 + r() * 0.7), plate);
+      const pl = new THREE.Mesh(new THREE.CylinderGeometry(rib.r + 3, rib.r + 3, 11, 24, 1, true, 0, 0.6 + r() * 0.7), plate);
       pl.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(f.r, f.t.clone().negate(), new THREE.Vector3(0, -1, 0)));
       pl.rotateY(r() * Math.PI);
       pl.position.set(f.p.x, floor, f.p.z); pl.castShadow = true; group.add(pl);
@@ -501,7 +535,7 @@ function buildGuides(group) {
     q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(f.r, f.u, f.t.clone().negate()));
     for (const side of [-1, 1]) {
       const p = f.p.clone().addScaledVector(f.r, side * (b.hw - 3));
-      p.y = Math.max(heightAt(p.x, p.z) + 1.2, TRACK.floorY[idx(s)] + 1.2);
+      p.y = heightAt(p.x, p.z) + 1.2; // on the ground, never floating over a dip
       m4.compose(p, q, new THREE.Vector3(1, 1, 1));
       const j = side < 0 ? 0 : 1; inst[j].setMatrixAt(c[j]++, m4);
     }

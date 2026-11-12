@@ -1,6 +1,8 @@
 // Procedural WebAudio: layered engine, weapons, explosions, item sounds, UI and an adaptive synthwave score.
 // Buses: sfx -> master, music -> master, both send into a shared reverb (thicker inside the tunnel).
 // play(name, dist, pan): dist in metres dulls and quiets distant sounds, pan in [-1, 1] places them left/right.
+// cue gains so short signals read over the engine (QA measured them 14-22 dB under it)
+const CUE = { pulse: 2, prism: 1.8, rail: 1.3, missile: 1.4, warn: 2.6, lock: 2.8, checkpoint: 2.6, beep: 1.6, hit: 1.5 };
 export class Audio {
   constructor() { this.ctx = null; this.muted = false; this.musicOn = true; this.intensity = 0; this.ext = null; }
   init() {
@@ -96,12 +98,12 @@ export class Audio {
     this.body.playbackRate.setTargetAtTime(0.75 + k * 0.3 + boost * 0.15, t, 0.2);
     this.engF.frequency.setTargetAtTime(260 + k * 520 + boost * 1100, t, 0.15);
     this.engB.frequency.setTargetAtTime(160 + k * 90 + boost * 60, t, 0.2);
-    this.eng.gain.setTargetAtTime(0.16 + k * 0.05 + boost * 0.1, t, 0.2);
+    this.eng.gain.setTargetAtTime((0.16 + k * 0.05 + boost * 0.1) * 0.65, t, 0.2);
     this.flut.frequency.setTargetAtTime(8 + k * 6, t, 0.3);
     const wf = 620 + speed * 7.5 + boost * 520;
     for (const { o, m } of this.whines) o.frequency.setTargetAtTime(wf * m, t, 0.35);
     this.whineF.frequency.setTargetAtTime(wf * 1.8, t, 0.35);
-    this.whineG.gain.setTargetAtTime(0.012 + k * 0.012 + boost * 0.008, t, 0.3);
+    this.whineG.gain.setTargetAtTime((0.012 + k * 0.012 + boost * 0.008) * 0.75, t, 0.3);
     this.wind.gain.setTargetAtTime(0.02 + speed / 2600 + (inTunnel ? 0.06 : 0), t, 0.2);
     this.windF.frequency.setTargetAtTime(inTunnel ? 420 : 700 + speed * 5, t, 0.25);
     this.roar.gain.setTargetAtTime(boost * 0.3, t, 0.1); this.roarF.frequency.setTargetAtTime(380 + boost * 1200, t, 0.15);
@@ -134,7 +136,7 @@ export class Audio {
   }
   play(name, dist = 0, pan = 0) {
     if (!this.ctx || this.muted) return;
-    const v = Math.max(0.04, 1 - dist / 750);
+    const v = Math.max(0.04, 1 - dist / 750) * (CUE[name] || 1);
     const T = (type, f0, f1, dur, vol, delay = 0, send = 0) => this.tone(type, f0, f1, dur, vol * v, delay, this.out(dist, pan, send));
     const N = (dur, f, vol, q, type, delay = 0, send = 0, f1) => this.noiseHit(dur, f, vol * v, q, type, delay, this.out(dist, pan, send), f1);
     switch (name) {

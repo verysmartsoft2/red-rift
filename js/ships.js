@@ -53,14 +53,15 @@ function flameMaterial(color) {
 // Panel lines, rivets and racing stripes in object space plus a darker belly.
 // stripe = [inner |x|, outer |x|, min y, enabled]
 const NO_EDGE = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); NO_EDGE.needsUpdate = true;
-function paintShader(mat, stripeColor, stripe, damage, edge = null) {
-  const U = { uStripeCol: { value: new THREE.Color(stripeColor) }, uStripe: { value: new THREE.Vector4(...stripe) }, uDamage: damage, uEdge: { value: edge || NO_EDGE } };
+function paintShader(mat, stripeColor, stripe, damage, edge = null, exit = null) {
+  const U = { uStripeCol: { value: new THREE.Color(stripeColor) }, uStripe: { value: new THREE.Vector4(...stripe) }, uDamage: damage, uEdge: { value: edge || NO_EDGE },
+    uExit: { value: exit || new THREE.Vector4(0, 0, -999, 1) } }; // |x|, y, z of the nozzle (mirrored pairs share |x|)
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vOP;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvOP = position;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-      varying vec3 vOP; uniform vec3 uStripeCol; uniform vec4 uStripe; uniform float uDamage; uniform sampler2D uEdge;
+      varying vec3 vOP; uniform vec3 uStripeCol; uniform vec4 uStripe; uniform float uDamage; uniform sampler2D uEdge; uniform vec4 uExit;
       float rrLine(float v, float s){ return abs(fract(v / s + 0.5) - 0.5) * s; }
       float rrAA(float d, float w){ float fw = fwidth(d) + 1e-4; return 1.0 - smoothstep(w - fw, w + fw, d); }
       float rrH(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
@@ -92,12 +93,18 @@ function paintShader(mat, stripeColor, stripe, damage, edge = null) {
       { // baked masks: convex edges lose paint down to bare metal, cavities collect grime
         float rrAO = texture2D(aoMap, vAoMapUv).r, rrEd = texture2D(uEdge, vAoMapUv).r * smoothstep(0.55, 0.85, rrAO);
         float rrBreak = rrN(vOP * 7.0) * 0.55 + rrN(vOP * 2.2 + 4.0) * 0.45;
-        rrChip = smoothstep(0.62, 0.8, rrEd * 0.75 + rrBreak * 0.55) * rrFade;
+        rrChip = smoothstep(0.5, 0.7, rrEd * 0.75 + rrBreak * 0.55) * rrFade; // chips big enough to read at chase distance
         diffuseColor.rgb *= 1.0 + rrEd * 0.1;
         diffuseColor.rgb *= mix(vec3(0.5, 0.44, 0.38), vec3(1.0), smoothstep(0.2, 0.85, rrAO));
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.5, 0.51, 0.53), rrChip * 0.85);
       }
       #endif
+      { // engine soot: dark streaks on the skin just ahead of the nozzles
+        float rrDz = vOP.z - uExit.z, rrDl = length(vec2(abs(vOP.x) - uExit.x, vOP.y - uExit.y));
+        float rrSoot = smoothstep(3.2, 0.2, rrDz) * step(-0.6, rrDz) * (1.0 - smoothstep(0.7, 2.1, rrDl));
+        rrSoot *= 0.55 + 0.45 * rrN(vec3(vOP.x * 5.0, vOP.y * 5.0, vOP.z * 0.5));
+        diffuseColor.rgb *= 1.0 - 0.6 * rrSoot; rrRough = mix(rrRough, 1.0, rrSoot * 0.5); rrChip *= 1.0 - rrSoot;
+      }
       // battle damage (damage stages reference): scorched patches spread with damage, embers glow in them when badly hurt
       float rrB = rrN(vOP * 0.9 + 11.0) * 0.65 + rrN(vOP * 3.6) * 0.35;
       float rrBurn = smoothstep(1.02 - uDamage * 0.75, 1.1 - uDamage * 0.75, rrB);
@@ -116,7 +123,8 @@ export function makeMaterials(liv, finishKey = 'gloss', meta = {}, ao = null, ed
   const fin = FINISHES.find(f => f.key === finishKey) || FINISHES[0];
   const withAO = (m) => { if (ao) { m.aoMap = ao; m.aoMapIntensity = 1; } return m; };
   const damage = { value: 0 }; // shared by all painted parts of this ship
-  const paint = (hex, stripe = [0, 0, 0, 0]) => withAO(paintShader(new THREE.MeshPhysicalMaterial({ color: hex, metalness: fin.metalness, roughness: fin.roughness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.08 }), liv.accent, stripe, damage, edge));
+  const e0 = (meta.engines || [])[0], exit = e0 ? new THREE.Vector4(Math.abs(e0.exit[0]), e0.exit[1], e0.exit[2], 1) : null;
+  const paint = (hex, stripe = [0, 0, 0, 0]) => withAO(paintShader(new THREE.MeshPhysicalMaterial({ color: hex, metalness: fin.metalness, roughness: fin.roughness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.08 }), liv.accent, stripe, damage, edge, exit));
   const std = (color, metalness, roughness, side = THREE.FrontSide) => withAO(new THREE.MeshStandardMaterial({ color, metalness, roughness, side }));
   const neonColor = new THREE.Color(liv.neon);
   const st = meta.stripe || [0, 0, 0], band = meta.band || [0, 0];
