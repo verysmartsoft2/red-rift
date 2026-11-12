@@ -206,8 +206,8 @@ export class FX {
   damageSmoke(p, hpFrac, dt) {
     if (hpFrac > 0.6) return;
     const rate = hpFrac < 0.3 ? 40 : 14;
-    if (Math.random() < rate * dt) this.smoke.emit(p, rv(3), new THREE.Color(0x2a2522), 2.4, 1.6, { grow: 6, alpha: 0.7 });
-    if (hpFrac < 0.3 && Math.random() < 8 * dt) this.add.emit(p, rv(3), new THREE.Color(0.9, 0.32, 0.06), 1.4, 0.18, { grow: 1 });
+    if (Math.random() < rate * dt) this.smoke.emit(p, rv(3), new THREE.Color(0x2a2522), 3.6, 1.8, { grow: 7, alpha: 0.85 });
+    if (hpFrac < 0.3 && Math.random() < 3 * dt) this.add.emit(p, rv(2), new THREE.Color(0.9, 0.32, 0.06), 0.6, 0.15, { grow: 0.5 });
     if (hpFrac < 0.45 && Math.random() < 6 * dt) this.sparks(p, tmp.set(0, 1, 0), 4, 0xffd080, 25);
   }
   // --- lasers / beams / missiles visuals, keyed by sim ids ---
@@ -351,12 +351,12 @@ function caseGeometry() {
   for (const y of [-h, h]) {
     dark.push(new THREE.CylinderGeometry(0.95, 1.1, 0.4, 24).translate(0, y * 0.86, 0));
     glow.push(new THREE.TorusGeometry(0.62, 0.09, 8, 32).rotateX(Math.PI / 2).translate(0, y * 0.86 - Math.sign(y) * 0.22, 0));
-    glow.push(new THREE.CircleGeometry(0.45, 24).rotateX(y > 0 ? Math.PI / 2 : -Math.PI / 2).translate(0, y * 0.86 - Math.sign(y) * 0.21, 0));
+    glow.push(new THREE.CircleGeometry(0.55, 24).rotateX(y > 0 ? Math.PI / 2 : -Math.PI / 2).translate(0, y * 0.86 - Math.sign(y) * 0.25, 0));
   }
   CASE_GEO = { glass: new THREE.BoxGeometry(S * 0.98, S * 0.98, S * 0.98), dark: mergeGeometries(dark), glow: mergeGeometries(glow) };
   return CASE_GEO;
 }
-const CASE_DARK = new THREE.MeshStandardMaterial({ color: 0x4a4f58, metalness: 0.5, roughness: 0.4 });
+const CASE_DARK = new THREE.MeshStandardMaterial({ color: 0x6e747e, metalness: 0.45, roughness: 0.38, emissive: 0x15181d });
 const CASE_MATS = {};
 function caseMaterials(key, color) {
   if (CASE_MATS[key]) return CASE_MATS[key];

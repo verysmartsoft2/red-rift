@@ -25,7 +25,14 @@ vec3 rockColor(vec3 p, vec3 n){
   float ripple = 0.5+0.5*sin(p.x*0.35+p.z*0.12+vnoise(p*0.03)*6.0);
   sand *= 0.93+0.09*ripple;
   float fl = smoothstep(0.70,0.92,n.y);
-  return mix(col, sand, fl);
+  // salt lake around the start (reference: white crust with hexagonal cracks)
+  float salt = uSalt.w * (1.0 - smoothstep(uSalt.z * 0.65, uSalt.z, length(p.xz - uSalt.xy))) * smoothstep(0.85, 0.97, n.y);
+  vec2 hq = p.xz * 0.055; vec2 hr = vec2(1.0, 1.732); vec2 hh = hr * 0.5;
+  vec2 ha = mod(hq, hr) - hh; vec2 hb = mod(hq - hh, hr) - hh; vec2 hg = dot(ha, ha) < dot(hb, hb) ? ha : hb;
+  float hx = max(dot(abs(hg), normalize(vec2(1.0, 1.732))), abs(hg.x));
+  float crack = smoothstep(0.44, 0.5, hx) * (0.6 + 0.4 * vnoise(p * 0.3));
+  vec3 saltC = vec3(0.92, 0.89, 0.85) * (0.9 + 0.1 * vnoise(p * 0.15)) * (1.0 - 0.45 * crack);
+  return mix(mix(col, sand, fl), saltC, salt);
 }
 `;
 
@@ -33,6 +40,7 @@ vec3 rockColor(vec3 p, vec3 n){
 export function makeRockMaterial({ portals = null, tint = 1 } = {}) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.93, metalness: 0.0 });
   m.userData.uniforms = {
+    uSalt: { value: new THREE.Vector4(0, 0, 1, 0) },
     uPortA: { value: new THREE.Vector3(1e6, 0, 0) }, uDirA: { value: new THREE.Vector3(1, 0, 0) },
     uPortB: { value: new THREE.Vector3(1e6, 0, 0) }, uDirB: { value: new THREE.Vector3(1, 0, 0) },
     uPR: { value: 0 }, uTint: { value: tint },
@@ -44,7 +52,7 @@ export function makeRockMaterial({ portals = null, tint = 1 } = {}) {
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm;')
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n mat4 mm4 = modelMatrix;\n#ifdef USE_INSTANCING\n mm4 = modelMatrix * instanceMatrix;\n#endif\n vWPos = (mm4 * vec4(transformed,1.0)).xyz; vWNrm = normalize(mat3(mm4) * objectNormal);');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm;\nuniform vec3 uPortA,uDirA,uPortB,uDirB; uniform float uPR; uniform float uTint;\n' + GLSL_NOISE + ROCK_FN)
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm;\nuniform vec3 uPortA,uDirA,uPortB,uDirB; uniform float uPR; uniform float uTint; uniform vec4 uSalt;\n' + GLSL_NOISE + ROCK_FN)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         { vec3 d = vWPos-uPortA; float al = dot(d,uDirA); if (abs(al)<34.0 && length(d-al*uDirA)<uPR) discard; }
         { vec3 d = vWPos-uPortB; float al = dot(d,uDirB); if (abs(al)<34.0 && length(d-al*uDirB)<uPR) discard; }`)

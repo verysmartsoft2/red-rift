@@ -20,8 +20,8 @@ const RAW = [
   [450, 1010, 208, 46, 40, 'tunnel'],
   [140, 1100, 212, 46, 40, 'tunnel'],
   // out of the mountain straight into a narrow gorge that drops ~170 m
-  [-120, 1180, 120, 62, 70, 'gorge'],
-  [-330, 1140, 30, 48, 80, 'gorge'],
+  [-120, 1180, 105, 110, 95, 'gorge'],
+  [-330, 1140, 25, 52, 80, 'gorge'],
   [-560, 1210, 40, 150, 120, 'wreck'],
   [-800, 1040, 50, 150, 90, 'wreck'],
   // wide canyon split by a rock ridge: two lanes, pick one
@@ -91,6 +91,7 @@ function buildTrack() {
     T.hw[i] = a[3] + (b[3] - a[3]) * e;
     const vh = a[4] + (b[4] - a[4]) * e;
     T.type[i] = TYPES.indexOf(a[5]);
+    if (a[5] === 'tunnel') T.hw[i] = Math.min(T.hw[i], 46); // the tube does not widen with the gorge ahead
     if (lt * N < 1e-9 || (i > 0 && Math.floor(((k + f - 0.0001) / M) * N) !== seg)) ctrlS[seg] = target;
     let floor = p.y - vh - 6;
     if (a[5] === 'wreck' || a[5] === 'dunes' || a[5] === 'split') floor = Math.max(VALLEY_FLOOR, Math.min(floor, VALLEY_FLOOR + 30));
@@ -221,7 +222,7 @@ function buildFeatures() {
   const [p0, p1] = RANGES.split;
   RIDGE = F.ridge = { s0: p0 + 120, s1: p1 - 60, w: 36 };
   // the right lane gets a boost ring, the left lane keeps the cases: a real choice
-  F.boostRings.push({ s: (RIDGE.s0 + RIDGE.s1) / 2, x: -(RIDGE.w + 46), y: 12 });
+  F.boostRings.push({ s: (RIDGE.s0 + RIDGE.s1) / 2, x: RIDGE.w + 24, y: 10 }); // on the lane line the AI flies
   // keep cases off the ridge
   for (const pk of F.pickups) { const w = ridgeAt(pk.s); if (w > 0) pk.x = Math.sign(pk.x || (pk.id % 2 ? 1 : -1)) * (w + 18 + Math.abs(pk.x) * 0.4); }
   // checkpoints every ~1 km, passed in order; the last one is the start/finish line

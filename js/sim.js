@@ -199,7 +199,8 @@ export class Race {
     }
     // the split ridge in the middle of the canyon is solid rock
     const rw = ridgeAt(s);
-    if (rw > 0 && Math.abs(r.x) < rw + 2) { const sg = Math.sign(r.x) || (r.id % 2 ? 1 : -1); r.x = sg * (rw + 2); r.vx = sg * Math.max(Math.abs(r.vx), 6); nx = sg; scraped = true; }
+    const rwc = rw > 0 ? rw + 2 + Math.max(0, 10 * (1 - (r.y - b.yMin) / 24)) : 0; // the ridge foot spreads near the floor
+    if (rw > 0 && Math.abs(r.x) < rwc) { const sg = Math.sign(r.x) || (r.id % 2 ? 1 : -1); r.x = sg * rwc; r.vx = sg * Math.max(Math.abs(r.vx), 6); nx = sg; scraped = true; }
     if (scraped && F.phase <= 0) {
       r.scrape += dt; this.damage(r, RACE.wallDamage * dt, null, 'wall'); r.speed *= 1 - 0.6 * dt;
       if (r.scrape > 0.08) { r.scrape = 0; this.emit({ type: 'scrape', r: r.id, s, x: r.x - nx * 3, y: r.y - ny * 3, nx, ny }); }
@@ -265,7 +266,8 @@ export class Race {
         const ma = a.def.hp, mb = b.def.hp;
         a.vx += side * 30 * mb / (ma + mb) * 2; b.vx -= side * 30 * ma / (ma + mb) * 2;
         a.x += side * 1.5; b.x -= side * 1.5;
-        this.damage(a, 4 * mb / ma, b, 'ram'); this.damage(b, 4 * ma / mb, a, 'ram');
+        const key = a.id * 8 + b.id; this.ramT = this.ramT || {}; // one hit per contact, not every frame of overlap
+        if (this.time - (this.ramT[key] ?? -9) > 0.8) { this.ramT[key] = this.time; this.damage(a, 6 * mb / ma, b, 'ram'); this.damage(b, 6 * ma / mb, a, 'ram'); }
         this.emit({ type: 'bump', s: wrapS(a.dist), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, a: a.id, b: b.id });
       }
     }
@@ -626,7 +628,7 @@ export class Race {
     // obstacle avoidance (always reactive)
     for (const sp of this.spires) {
       if (!sp.alive) continue; const d = dS(sp.s, s);
-      if (d > 0 && d < 140 && Math.abs(tx - sp.x) < sp.radius + 14) { tx = sp.x + (r.x > sp.x ? 1 : -1) * (sp.radius + 18); if (Math.abs(tx) > b.hw - 8) tx = sp.x - Math.sign(tx - sp.x) * (sp.radius + 18); }
+      if (d > 0 && d < 160 && (Math.abs(tx - sp.x) < sp.radius + 14 || Math.abs(r.x - sp.x) < sp.radius + 12)) { tx = sp.x + (r.x > sp.x ? 1 : -1) * (sp.radius + 18); if (Math.abs(tx) > b.hw - 8) tx = sp.x - Math.sign(tx - sp.x) * (sp.radius + 18); }
     }
     for (const a of FEATURES.arches) { const d = dS(a.s, s); if (d > -5 && d < 160) ty = Math.min(ty, a.y - a.thick - 14); }
     const cy = TRACK.py[idx(s)];
@@ -634,7 +636,7 @@ export class Race {
     const bb = bounds(s + 40);
     tx = clamp(tx, -bb.hw + 12, bb.hw - 12); ty = clamp(ty, bb.yMin + 8, bb.yMax - 12);
     const rwA = Math.max(ridgeAt(s + 40), ridgeAt(s + 120), ridgeAt(s + 220));
-    if (rwA > 0) { if (!A.lane) A.lane = r.item < 0 ? 1 : (R() < 0.5 ? -1 : 1); if (Math.abs(tx) < rwA + 16 || Math.sign(tx) !== A.lane) tx = A.lane * (rwA + 24); } // pick a lane early
+    if (rwA > 0) { if (!A.lane) A.lane = R() < 0.5 ? -1 : 1; if (Math.abs(tx) < rwA + 16 || Math.sign(tx) !== A.lane) tx = A.lane * (rwA + 24); } // pick a lane early
     else A.lane = 0;
     if (bb.tunnel) { const rr = Math.hypot(tx, ty), m = bb.hw - 16; if (rr > m) { tx *= m / rr; ty *= m / rr; } }
     inp.steer = clamp((tx - r.x) / 14 - r.vx * 0.02, -1, 1);
@@ -644,7 +646,7 @@ export class Race {
     const tgt = A.tgt >= 0 ? this.racers[A.tgt] : null;
     const heatOk = r.heat < 80 || r.fx.overload > 0;
     A.burst = (A.burst || 0) - dt; if (A.burst < -1.6 * (1.2 - A.aggro)) A.burst = 0.6 + A.aggro * 1.6; // fire in bursts, calmer AI rests longer
-    const calm = this.time < 40 ? 0.45 : 1; // the opening lap is a race, not a massacre
+    const calm = r.lap <= 1 ? 0.5 : 1; // the opening lap is a race, not a massacre
     inp.fire = !!tgt && !tgt.dead && tgt.protect <= 0 && heatOk && A.burst > 0 && R() < (0.3 + A.aggro * 0.7) * calm;
     if (r.laser.rail) inp.fire = !!tgt && A.railHold;
     if (r.lockTarget >= 0 && r.lockT > 0.6 && r.ammo > 0 && R() < dt * (0.25 + A.aggro * 0.9)) inp.missile = true;

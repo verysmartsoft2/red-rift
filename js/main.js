@@ -123,8 +123,8 @@ let displayShip = null;
 const hangarPos = new THREE.Vector3();
 const pad = new THREE.Group();
 function setupHangar() {
-  const f = frameAt(-140, newFrame());
-  hangarPos.copy(f.p).addScaledVector(f.r, -60); hangarPos.y = TRACK.floorY[0] + 16;
+  const f = frameAt(-620, newFrame()); // well clear of the start gate pillars
+  hangarPos.copy(f.p).addScaledVector(f.r, -40); hangarPos.y = TRACK.floorY[0] + 16;
   const disc = new THREE.Mesh(new THREE.CylinderGeometry(16, 18, 1.5, 48), new THREE.MeshStandardMaterial({ color: 0x15151c, metalness: 0.9, roughness: 0.25 }));
   const ring = new THREE.Mesh(new THREE.TorusGeometry(17, 0.35, 8, 96), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2f6a).multiplyScalar(1.6) }));
   ring.rotation.x = Math.PI / 2; ring.position.y = 0.8;
@@ -145,7 +145,7 @@ function refreshDisplayShip() {
   scene.add(displayShip);
   // frame the whole airframe: orbit distance follows the ship's size
   const bs = new THREE.Box3().setFromObject(displayShip.userData.body).getBoundingSphere(new THREE.Sphere());
-  orbit.base = Math.max(16, bs.radius * (innerWidth < innerHeight ? 3.6 : 2.2)); orbit.dist = orbit.base;
+  orbit.base = Math.max(16, bs.radius * (innerWidth < innerHeight ? 4.3 : 2.2)); orbit.dist = orbit.base;
 }
 
 // ---------------- menu UI ----------------
@@ -329,6 +329,7 @@ function clientSync(rdt) {
 }
 net.on('join', () => mpStatus('Пилот подключается…'));
 net.on('msg', (d, from) => {
+  if (!net.role) return; // stale message after leaving the room
   if (net.role === 'host') {
     if (d.t === 'hello') { mp.guests.set(from, d.p); hostLobby(); mpStatus('В комнате пилотов: ' + (mp.guests.size + 1) + ' из 3'); }
     else if (d.t === 'i' && race) {
@@ -353,7 +354,7 @@ net.on('leave', (peer) => {
     if (race && idx != null && race.racers[idx]) { const r = race.racers[idx]; r.remote = false; r.net = null; r.ai = { ...race.level, steer: 0, climb: 0, jink: 1, fireHold: 0, think: 0, tx: 0, ty: 0 }; if (mode === 'race') feed(r.name + ' отключился — его ведёт бот'); }
     hostLobby(); mpStatus(p ? p.name + ' вышел из комнаты' : 'Пилот вышел');
   } else {
-    net.leave(); renderLobby([]); if (mode !== 'menu') showMenu(); mpStatus('Связь с хозяином комнаты потеряна');
+    net.leave(); renderLobby([]); if (mode !== 'menu') showMenu(); mpStatus('Связь с хозяином комнаты потеряна. Можно войти в комнату снова.');
   }
 });
 net.on('error', (e) => mpStatus('Ошибка сети: ' + ((e && (e.message || e.type)) || e)));
@@ -496,7 +497,10 @@ function sfx(name, pos, mul = 1) {
   audio.play(name, d, pan * 0.85);
 }
 function feed(html) { const d = el('div', '', html); $('hFeed').prepend(d); setTimeout(() => d.remove(), 5000); while ($('hFeed').children.length > 5) $('hFeed').lastChild.remove(); }
-const nameOf = (r) => `<span style="color:${r.livery.neon}">${r.name}</span>`;
+// racer colour for UI: the livery's main paint, lifted so it reads on the dark HUD
+const _uc = new THREE.Color(), _hsl = {};
+function uiColor(liv) { _uc.set(liv.primary).getHSL(_hsl); _uc.setHSL(_hsl.h, Math.max(_hsl.s, _hsl.s > 0.12 ? 0.6 : 0), Math.min(0.78, Math.max(0.58, _hsl.l))); return '#' + _uc.getHexString(); }
+const nameOf = (r) => `<span style="color:${uiColor(r.livery)}">${r.name}</span>`;
 function center(t, pop = false) { const c = $('hCenter'); c.textContent = t; if (pop) { c.classList.remove('popin'); void c.offsetWidth; c.classList.add('popin'); } }
 let subT = 0; function sub(t, dur = 1.6) { $('hSub').textContent = t; subT = dur; }
 // pickup card: what the case gave and what it does
@@ -637,7 +641,7 @@ function updateRaceVisuals(dt, rdt) {
     m.userData.refs.setDamage(Math.max(0, Math.min(1, 1 - hpF)));
     fx.damageSmoke(pos, hpF, dt);
     if (hpF < 0.35) for (const ex of m.userData.refs.exits) { // engine failure: fire and black smoke from the nozzles
-      if (Math.random() < dt * 25) { const wp = m.userData.body.localToWorld(ex.clone()); fx.add.emit(wp, new THREE.Vector3((Math.random() - 0.5) * 4, 2, (Math.random() - 0.5) * 4), new THREE.Color(1, 0.45 + Math.random() * 0.2, 0.1), 2.6, 0.28, { grow: 2 }); if (Math.random() < 0.5) fx.smoke.emit(wp, new THREE.Vector3(0, 3, 0), new THREE.Color(0x141210), 2.2, 1.6, { grow: 6, alpha: 0.6 }); }
+      if (Math.random() < dt * 14) { const wp = m.userData.body.localToWorld(ex.clone()); fx.add.emit(wp, new THREE.Vector3((Math.random() - 0.5) * 3, 1.5, (Math.random() - 0.5) * 3), new THREE.Color(0.95, 0.4, 0.08), 1.1, 0.2, { grow: 1 }); if (Math.random() < 0.5) fx.smoke.emit(wp, new THREE.Vector3(0, 3, 0), new THREE.Color(0x141210), 2.2, 1.6, { grow: 6, alpha: 0.6 }); }
     }
     if (r.fx.emp > 0 && Math.random() < 0.5) fx.add.emit(tv2.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 10)), new THREE.Vector3(), new THREE.Color(0x60b0ff), 1.5, 0.12);
     if (r.fx.slow > 0 && Math.random() < 0.6) fx.add.emit(pos, new THREE.Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8), new THREE.Color(0xa05cff), 2.5, 0.5);
@@ -770,7 +774,7 @@ function minimap() {
   mmx.lineWidth = 2; mmx.strokeStyle = 'rgba(41,243,255,0.7)'; mmx.stroke();
   for (const r of race.racers) {
     if (r.dead) continue; const i = Math.floor(wrapS(r.dist) / TRACK.ds) % TRACK.n;
-    mmx.fillStyle = r.livery.primary; mmx.beginPath(); mmx.arc(X(TRACK.px[i]), Z(TRACK.pz[i]), r.human ? 6 : 4, 0, 7); mmx.fill();
+    mmx.fillStyle = uiColor(r.livery); mmx.beginPath(); mmx.arc(X(TRACK.px[i]), Z(TRACK.pz[i]), r.human ? 6 : 4, 0, 7); mmx.fill();
     if (r.human) { mmx.strokeStyle = '#fff'; mmx.lineWidth = 2; mmx.stroke(); }
   }
 }
@@ -816,7 +820,7 @@ function updateHUD(rdt) {
     const st = $('hStand'); st.innerHTML = '';
     for (const r of race.order || race.racers) {
       const li = el('li', (r.human ? 'me ' : '') + (r.dead ? 'dead' : ''));
-      const sw = el('i'); sw.style.background = r.livery.neon;
+      const sw = el('i'); sw.style.background = uiColor(r.livery);
       const lead = race.order[0];
       const gap = r === lead ? (r.finished ? 'ФИНИШ' : 'ЛИДЕР') : (r.finished ? fmt(r.finishTime) : '−' + Math.max(0, Math.round(lead.dist - r.dist)) + ' м');
       li.append(el('span', '', r.place), sw, el('span', '', r.name), el('span', '', gap));
@@ -850,7 +854,7 @@ function updateHUD(rdt) {
     if (sp.z > 1 || Math.abs(sp.x) > 1.1 || Math.abs(sp.y) > 1.1) continue;
     let t = tagPool[n]; if (!t) { t = el('div', 'tag'); t.innerHTML = '<span></span><i><b></b></i>'; tags.appendChild(t); tagPool.push(t); }
     t.style.display = ''; t.style.left = ((sp.x + 1) / 2 * innerWidth) + 'px'; t.style.top = ((1 - sp.y) / 2 * innerHeight) + 'px';
-    t.firstChild.textContent = `${r.name} ${Math.round(d)}м`; t.firstChild.style.color = r.livery.primary;
+    t.firstChild.textContent = `${r.name} ${Math.round(d)}м`; t.firstChild.style.color = uiColor(r.livery);
     t.lastChild.firstChild.style.width = Math.max(0, r.hp / r.maxHp * 100) + '%';
     n++;
   }
@@ -884,7 +888,7 @@ function showResults() {
   const place = rows.findIndex(x => x.r === P) + 1;
   $('resTitle').textContent = place === 1 ? 'ПОБЕДА' : `${place} МЕСТО`;
   let html = '<tr><th>МЕСТО</th><th>ПИЛОТ</th><th>САМОЛЁТ</th><th>ВРЕМЯ</th><th>СБИЛ</th><th>ПОТЕРИ</th></tr>';
-  rows.forEach((x, i) => { html += `<tr class="${x.r === P ? 'me' : ''}"><td>${i + 1}</td><td style="color:${x.r.livery.neon}">${x.r.name}</td><td>${x.r.def.name}</td><td>${fmt(x.t)}${x.r.finished ? '' : '*'}</td><td>${x.r.kills}</td><td>${x.r.deaths}</td></tr>`; });
+  rows.forEach((x, i) => { html += `<tr class="${x.r === P ? 'me' : ''}"><td>${i + 1}</td><td style="color:${uiColor(x.r.livery)}">${x.r.name}</td><td>${x.r.def.name}</td><td>${fmt(x.t)}${x.r.finished ? '' : '*'}</td><td>${x.r.kills}</td><td>${x.r.deaths}</td></tr>`; });
   html += `<tr><td colspan="6" class="small">Лучший круг: ${fmt(bestLap)} · уровень ИИ: ${AI_LEVELS[S.diff].name}${rows.some(x => !x.r.finished) ? ' · * расчётное время' : ''}</td></tr>`;
   $('resTable').innerHTML = html;
 }

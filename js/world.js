@@ -97,7 +97,7 @@ function computeHeightfield() {
         if (rw > 0) {
           const top = F + 150 + 50 * fbm(x * 0.004 + 3, z * 0.004, 3) + ridged(x * 0.02, z * 0.02, 2) * 14;
           const top2 = Math.max(top, T.ceilY[i] + 45); // never lower than the flight ceiling: no invisible wall above it
-          h = Math.max(h, lerp(h, terrace(top2, 22), smooth(rw + 5, rw - 2, d)));
+          h = Math.max(h, lerp(h, top2, smooth(rw + 3, rw - 1, d))); // sheer smooth walls (terraces made it a staircase)
         }
       }
     }
@@ -107,7 +107,7 @@ function computeHeightfield() {
       const ea = (x - fa.p.x) * fa.t.x + (z - fa.p.z) * fa.t.z;
       const eb = (x - fb.p.x) * fb.t.x + (z - fb.p.z) * fb.t.z;
       const nearOpen = niN[k] >= 0 && Math.sqrt(ndN[k]) < T.hw[niN[k]] + 90; // never bury another part of the course
-      if (ea > -4 && eb < 0 && !nearOpen) {
+      if (ea > 8 && eb < -8 && !nearOpen) {
         const m = 1 - smooth(330, 540, dT);
         const top = 440 + 110 * fbm(x * 0.002, z * 0.002, 4) + ridged(x * 0.008, z * 0.008) * 40;
         h = Math.max(h, lerp(h, terrace(top, 30), m));
@@ -118,7 +118,7 @@ function computeHeightfield() {
     if (tiT[k] >= 0) {
       const it = tiT[k], dT2 = Math.sqrt(td[k]);
       const ea2 = (x - fa.p.x) * fa.t.x + (z - fa.p.z) * fa.t.z, eb2 = (x - fb.p.x) * fb.t.x + (z - fb.p.z) * fb.t.z;
-      inMountain = ea2 > 2 && eb2 < -2 && td[k] <= ndN[k];
+      inMountain = ea2 > 8 && eb2 < -8 && td[k] <= ndN[k];
       if (inMountain && dT2 < T.hw[it] + 40) h = Math.max(h, T.py[it] + T.hw[it] + 30);
     }
     // nothing may rise into the flight corridor (except the split ridge)
@@ -535,6 +535,7 @@ export function buildWorld(scene, renderer, onProgress = () => {}) {
   const tg = new THREE.Group(); world.add(tg);
   const tinfo = buildTunnel(tg);
   const U = terrainMat.userData.uniforms;
+  { const f0 = frameAt(0, newFrame()); if (U.uSalt) U.uSalt.value.set(f0.p.x, f0.p.z, 1100, 1); } // white salt lake around the start
   U.uPortA.value.copy(tinfo.portalA.p); U.uDirA.value.copy(tinfo.portalA.t);
   U.uPortB.value.copy(tinfo.portalB.p); U.uDirB.value.copy(tinfo.portalB.t); U.uPR.value = tinfo.radius;
   world.add(buildTerrainMesh(terrainMat));
