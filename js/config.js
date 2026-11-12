@@ -2,6 +2,7 @@
 export const RACE = {
   laps: 3, racers: 5, countdown: 3,
   lapTarget: 18000, // the loop is scaled to ~18 km per lap
+  catchup: 0.25, catchupFull: 700, // everyone behind the leader gets up to +25 % speed, full at 700 m behind
   respawnDelay: 4, rollback: 250, protect: 3, // rollback never crosses the lap start
   checkpointSpacing: 1000, // checkpoints must be passed in order
   minSpeed: 55, // no reverse, no hovering
@@ -15,27 +16,27 @@ export const RACE = {
 export const SHIPS = [
   { key: 'kestrel', name: 'KESTREL', role: 'Скорость', color: '#2f8bff',
     desc: 'Лёгкая дельта с одним мощным двигателем. Самая высокая скорость, но тонкая броня.',
-    cruise: 105, top: 119, accel: 34, handling: 46, climb: 40, hp: 90, cooling: 30, energy: 100,
+    cruise: 109, top: 123, accel: 34, handling: 46, climb: 40, hp: 90, cooling: 30, energy: 100,
     stats: { speed: 5, handling: 3, armor: 1, firepower: 3 },
     ability: { key: 'dash', name: 'СЛИПСТРИМ-РЫВОК', cd: 9, dur: 1.3, desc: 'Рывок ×1.6 на 1.3 с, пробивает выхлоп соперника' } },
   { key: 'mirage', name: 'MIRAGE', role: 'Маневренность', color: '#ff2fb0',
     desc: 'Серповидное крыло с двигателями на законцовках. Лучший манёвр и голограмма-приманка.',
-    cruise: 102, top: 115, accel: 32, handling: 62, climb: 56, hp: 100, cooling: 26, energy: 100,
+    cruise: 105, top: 119, accel: 32, handling: 62, climb: 56, hp: 100, cooling: 26, energy: 100,
     stats: { speed: 4, handling: 5, armor: 2, firepower: 2 },
     ability: { key: 'decoy', name: 'МИРАЖ', cd: 11, dur: 3, desc: 'Голограмма срывает захват ракет, вы становитесь полупрозрачным' } },
   { key: 'bastion', name: 'BASTION', role: 'Броня', color: '#ffd400',
     desc: 'Тяжёлая двухбалочная машина. Держит удар, таранит соперников, ставит энергокупол.',
-    cruise: 98, top: 110, accel: 26, handling: 38, climb: 32, hp: 160, cooling: 28, energy: 100,
+    cruise: 95, top: 107, accel: 26, handling: 38, climb: 32, hp: 160, cooling: 28, energy: 100,
     stats: { speed: 2, handling: 1, armor: 5, firepower: 4 },
     ability: { key: 'shield', name: 'ЭНЕРГОКУПОЛ', cd: 13, dur: 3.5, desc: 'Купол поглощает 70 урона и отражает лазеры' } },
   { key: 'arc', name: 'ARC', role: 'Лазеры', color: '#a05cff',
     desc: 'Раздвоенный нос с излучателем. Мощнейшие лазеры и быстрое охлаждение.',
-    cruise: 100, top: 113, accel: 30, handling: 48, climb: 44, hp: 110, cooling: 42, energy: 100,
+    cruise: 101, top: 114, accel: 30, handling: 48, climb: 44, hp: 110, cooling: 42, energy: 100,
     stats: { speed: 3, handling: 3, armor: 2, firepower: 5 },
     ability: { key: 'overload', name: 'ПЕРЕГРУЗКА', cd: 13, dur: 3.5, desc: 'Урон лазеров ×1.6, нагрев отключён' } },
   { key: 'nomad', name: 'NOMAD', role: 'Универсал', color: '#ff8a1e',
     desc: 'Две гондолы и V-хвост. Сбалансирован, чинится в полёте и носит больше ракет.',
-    cruise: 102, top: 115, accel: 31, handling: 50, climb: 46, hp: 125, cooling: 32, energy: 100, extraMissiles: 2,
+    cruise: 101, top: 114, accel: 31, handling: 50, climb: 46, hp: 125, cooling: 32, energy: 100, extraMissiles: 2,
     stats: { speed: 3, handling: 3, armor: 3, firepower: 3 },
     ability: { key: 'repair', name: 'НАНОРЕМОНТ', cd: 16, dur: 3, desc: 'Восстанавливает 40 брони за 3 с' } },
 ];
@@ -106,10 +107,10 @@ export const ITEMS = [
 ];
 
 export const AI_LEVELS = [
-  { key: 'rookie', name: 'НОВИЧОК', speed: 0.9, aim: 0.3, react: 0.9, aggro: 0.3, line: 0.5, rubber: 0.06, dmg: 0.25 },
-  { key: 'pilot', name: 'ПИЛОТ', speed: 0.96, aim: 0.55, react: 0.55, aggro: 0.55, line: 0.75, rubber: 0.05, dmg: 0.42 },
-  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04, dmg: 0.42 },
-  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03, dmg: 0.5 },
+  { key: 'rookie', name: 'НОВИЧОК', speed: 0.9, aim: 0.3, react: 0.9, aggro: 0.3, line: 0.5, rubber: 0.06, dmg: 0.16 },
+  { key: 'pilot', name: 'ПИЛОТ', speed: 0.96, aim: 0.55, react: 0.55, aggro: 0.55, line: 0.75, rubber: 0.05, dmg: 0.26 },
+  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04, dmg: 0.28 },
+  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03, dmg: 0.33 },
 ];
 
 export const AI_NAMES = ['ВЕКТОР', 'ГАДЮКА', 'ТУМАН', 'ФЕНИКС', 'КОБРА', 'ОРИОН', 'РАЗРЯД', 'СТРИЖ'];

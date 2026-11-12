@@ -9,7 +9,7 @@ const MAX_GUESTS = 2;
 // racer fields mirrored to guests (positions are smoothed separately)
 export const MOVE_KEYS = ['dist', 'x', 'y', 'vx', 'vy', 'speed', 'bank'];
 export const STATE_KEYS = ['hp', 'maxHp', 'shield', 'dome', 'dead', 'respawnT', 'protect', 'place', 'lap', 'cp', 'finished', 'finishTime', 'item',
-  'abilityCd', 'abilityT', 'heat', 'overheat', 'charge', 'ammo', 'lockTarget', 'lockT', 'kills', 'deaths', 'beamOn', 'spawnId', 'lastMissile', 'draft'];
+  'abilityCd', 'abilityT', 'heat', 'overheat', 'charge', 'ammo', 'lockTarget', 'lockT', 'kills', 'deaths', 'beamOn', 'spawnId', 'lastMissile', 'draft', 'catchup'];
 const FX_KEYS = ['boost', 'slow', 'emp', 'phase', 'decoy', 'overload', 'nova', 'dash', 'repair', 'ring', 'holo'];
 const r2 = (v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
 

@@ -153,14 +153,15 @@ export class Race {
     const inp = r.input, def = r.def;
     // speed
     let target = def.cruise * (r.ai ? r.ai.speed : 1);
-    if (r.ai) {
-      const gap = this.player.dist - r.dist;
-      target *= 1 + clamp(gap / 600, -1, 1) * r.ai.rubber;
-      // pack racing: the field closes up instead of stringing out into a procession
-      const lead = this.order && this.order[0];
-      if (lead && lead !== r) target *= 1 + clamp((lead.dist - r.dist) / 2500, 0, 1) * 0.07;
-      else if (lead === r && this.order[1]) target *= 1 - clamp((r.dist - this.order[1].dist) / 2500, 0, 1) * 0.04;
-    }
+    if (r.ai) target *= 1 + clamp((this.player.dist - r.dist) / 600, -1, 1) * r.ai.rubber; // bots stay near the human
+    // catch-up for every pilot, humans included: the further behind the leader, the faster (nobody flies away for good);
+    // the leader with a big margin is slowed a little
+    let lead = -1e9, second = -1e9;
+    for (const o of this.racers) { if (o === r || o.finished) continue; if (o.dist > lead) { second = lead; lead = o.dist; } else if (o.dist > second) second = o.dist; }
+    r.catchup = 0;
+    if (!r.finished && lead > r.dist) r.catchup = clamp((lead - r.dist - 60) / RACE.catchupFull, 0, 1) * RACE.catchup;
+    else if (!r.finished && lead > -1e8) r.catchup = -clamp((r.dist - lead - 150) / 2000, 0, 1) * 0.04;
+    target *= 1 + r.catchup;
     if (inp.brake) target *= 0.62;
     // slipstream: tucked in 10-70 m behind a rival gives +12 % (KESTREL's dash also cuts through it)
     r.draft = false;

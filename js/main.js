@@ -159,7 +159,8 @@ function buildMenu() {
   const names = { speed: 'Скорость', handling: 'Манёвр', armor: 'Броня', firepower: 'Огонь' };
   for (const k in names) { st.appendChild(el('span', '', names[k])); const p = el('div', 'pips'); for (let i = 0; i < 5; i++) p.appendChild(el('i', i < sh.stats[k] ? 'f' : '')); st.appendChild(p); }
   st.appendChild(el('span', '', 'Броня, ед.')); st.appendChild(el('span', '', String(sh.hp)));
-  st.appendChild(el('span', '', 'Макс. км/ч')); st.appendChild(el('span', '', String(Math.round(sh.top * 3.6))));
+  st.appendChild(el('span', '', 'Крейсер, км/ч')); st.appendChild(el('span', '', String(Math.round(sh.cruise * 3.6))));
+  st.appendChild(el('span', '', 'Форсаж, км/ч')); st.appendChild(el('span', '', String(Math.round(sh.top * 1.5 * 3.6))));
   $('abName').textContent = sh.ability.name; $('abDesc').textContent = sh.ability.desc;
   // liveries
   // this airframe's five paint schemes: in the Livery tab and right under the ship on the Ship tab
@@ -836,6 +837,7 @@ function updateHUD(rdt) {
   hudT -= rdt; subT -= rdt; if (subT <= 0) $('hSub').textContent = '';
   if (!race.started) { const c = Math.ceil(race.countdown); if ($('hCenter').textContent !== String(c) && c > 0) { center(String(c), true); audio.play('beep'); } }
   $('hSpeed').textContent = Math.round(P.speed * 3.6);
+  { const c = P.catchup || 0, el2 = $('hCatch'); el2.textContent = c > 0.015 ? 'ДОГОН +' + Math.round(c * 100) + '%' : ''; }
   $('hHp').style.width = Math.max(0, P.hp / P.maxHp * 100) + '%';
   $('hHp').style.background = P.hp / P.maxHp < 0.3 ? '#ff3050' : '';
   $('hShield').style.width = Math.min(100, (P.shield + P.dome) / 70 * 100) + '%';
