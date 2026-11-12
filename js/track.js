@@ -3,37 +3,47 @@
 import * as THREE from 'three';
 import { rng, clamp } from './noise.js';
 
-export const S = 2.17; // map scale: gives an ~18 km lap
+export const S = 1.87; // map scale: gives an ~18 km lap
 // x, z, centreY, halfWidth, halfHeight, sector
 const RAW = [
   [0, -1100, 300, 95, 70, 'start'],
-  [450, -1080, 296, 95, 70, 'start'],
-  [800, -900, 262, 70, 68, 'canyon'],
-  [1000, -650, 232, 58, 66, 'canyon'],
-  [1240, -470, 214, 60, 66, 'canyon'],
-  [1080, -260, 198, 58, 66, 'canyon'],
-  [1260, -40, 186, 64, 66, 'canyon'],
-  [1150, 200, 176, 82, 70, 'arches'],
-  [1260, 430, 178, 78, 70, 'arches'],
-  [1080, 640, 190, 78, 70, 'arches'],
-  [820, 830, 202, 46, 40, 'tunnel'],
-  [450, 1010, 208, 46, 40, 'tunnel'],
-  [140, 1100, 212, 46, 40, 'tunnel'],
+  [420, -1060, 296, 95, 70, 'start'],
+  // the red canyon snakes north: right, a left hairpin into the basin, right again, with dips and rises
+  [720, -920, 270, 70, 68, 'canyon'],
+  [830, -700, 232, 58, 66, 'canyon'],
+  [640, -520, 250, 60, 66, 'canyon'],
+  [760, -320, 214, 58, 66, 'canyon'],
+  [1060, -390, 236, 60, 66, 'canyon'],
+  [1300, -220, 198, 62, 66, 'canyon'],
+  [1220, 20, 184, 64, 66, 'canyon'],
+  // stone arches: an S through the rock gardens
+  [1000, 180, 176, 82, 70, 'arches'],
+  [1080, 420, 180, 78, 70, 'arches'],
+  [1330, 560, 186, 78, 70, 'arches'],
+  [1240, 790, 194, 78, 70, 'arches'],
+  [980, 930, 200, 46, 40, 'tunnel'],
+  [640, 1050, 206, 46, 40, 'tunnel'],
+  [300, 1110, 212, 46, 40, 'tunnel'],
   // out of the mountain straight into a narrow gorge that drops ~170 m
-  [-120, 1180, 105, 110, 95, 'gorge'],
-  [-330, 1140, 25, 52, 80, 'gorge'],
-  [-560, 1210, 40, 150, 120, 'wreck'],
-  [-800, 1040, 50, 150, 90, 'wreck'],
+  [40, 1180, 105, 110, 95, 'gorge'],
+  [-170, 1120, 25, 52, 80, 'gorge'],
+  [-420, 1190, 40, 150, 120, 'wreck'],
+  [-700, 1060, 50, 150, 90, 'wreck'],
   // wide canyon split by a rock ridge: two lanes, pick one
-  [-930, 780, 56, 150, 80, 'split'],
-  [-1120, 520, 58, 150, 80, 'split'],
-  [-1180, 260, 60, 130, 60, 'dunes'],
-  [-1060, 40, 66, 110, 60, 'climb'],
-  [-1240, -200, 110, 80, 70, 'climb'],
-  [-1060, -420, 170, 80, 70, 'climb'],
-  [-1210, -640, 220, 84, 70, 'climb'],
-  [-880, -830, 262, 90, 70, 'start'],
-  [-460, -1030, 292, 95, 70, 'start'],
+  [-860, 820, 56, 150, 80, 'split'],
+  [-1080, 600, 58, 150, 80, 'split'],
+  // the dune sea loops east into the basin and back
+  [-1000, 360, 60, 130, 60, 'dunes'],
+  [-720, 300, 48, 110, 60, 'dunes'],
+  [-590, 100, 70, 95, 60, 'dunes'],
+  // serpentine climb: five switchbacks up to the plateau
+  [-770, -60, 74, 80, 70, 'climb'],
+  [-1100, -50, 104, 64, 70, 'climb'],
+  [-1240, -250, 142, 60, 70, 'climb'],
+  [-1050, -440, 182, 60, 70, 'climb'],
+  [-1170, -660, 222, 62, 70, 'climb'],
+  [-920, -830, 262, 90, 70, 'start'],
+  [-460, -1040, 292, 95, 70, 'start'],
 ];
 
 export const SECTOR_INFO = {
@@ -98,6 +108,13 @@ function buildTrack() {
     T.floorY[i] = floor;
     T.ceilY[i] = p.y + vh * 1.5;
   }
+  // the corridor narrows into the tube and flares out of it again (no 46 -> 110 m step at the portals)
+  { const tun = TYPES.indexOf('tunnel');
+    for (let i = 0; i < n; i++) {
+      if (T.type[i] !== tun) continue;
+      if (T.type[(i + 1) % n] !== tun) for (let j = 1; j <= 70; j++) { const q = (i + j) % n; T.hw[q] = Math.min(T.hw[q], 46 + j * DS * 0.5); }
+      if (T.type[(i - 1 + n) % n] !== tun) for (let j = 1; j <= 70; j++) { const q = (i - j + n) % n; T.hw[q] = Math.min(T.hw[q], 46 + j * DS * 0.5); }
+    } }
   // tangents and frames
   const up = new THREE.Vector3(0, 1, 0);
   for (let i = 0; i < n; i++) {
@@ -116,6 +133,10 @@ function buildTrack() {
       for (let i = 0; i < n; i++) { let s = 0; for (let j = -20; j <= 20; j++) s += c[(i + j + n) % n]; arr[i] = s / 41; }
     }
   }
+  // under the tunnel exit the floor eases down (a lip, then the drop) instead of opening straight below the portal
+  { const tun = TYPES.indexOf('tunnel');
+    for (let i = 0; i < n; i++) if (T.type[i] === tun && T.type[(i + 1) % n] !== tun)
+      for (let j = 1; j <= 70; j++) { const q = (i + j) % n; T.floorY[q] = Math.max(T.floorY[q], T.py[q] - 51 - j * DS * 0.8); } }
   // sector starts
   for (let i = 0; i < n; i++) {
     const ty = T.type[i], pt = T.type[(i - 1 + n) % n];
@@ -223,6 +244,11 @@ function buildFeatures() {
   RIDGE = F.ridge = { s0: p0 + 120, s1: p1 - 60, w: 36 };
   // the right lane gets a boost ring, the left lane keeps the cases: a real choice
   F.boostRings.push({ s: (RIDGE.s0 + RIDGE.s1) / 2, x: RIDGE.w + 24, y: 10 }); // on the lane line the AI flies
+  // spires in the approach to the split stand by the outer walls: ships queue on the lane lines there
+  for (const sp of F.spires) if (sp.s > RIDGE.s0 - 500 && sp.s < RIDGE.s1 + 450) { // ...and where they leave the lanes
+    const hw = TRACK.hw[idx(sp.s)];
+    sp.x = Math.sign(sp.x || 1) * Math.max(Math.abs(sp.x), Math.min(hw - sp.radius - 8, RIDGE.w + 62 + sp.radius));
+  }
   // keep cases off the ridge
   for (const pk of F.pickups) { const w = ridgeAt(pk.s); if (w > 0) pk.x = Math.sign(pk.x || (pk.id % 2 ? 1 : -1)) * (w + 18 + Math.abs(pk.x) * 0.4); }
   // checkpoints every ~1 km, passed in order; the last one is the start/finish line
@@ -242,6 +268,13 @@ export function ridgeAt(s) {
   const t = (wrapS(s) - R.s0) / (R.s1 - R.s0); if (t <= 0 || t >= 1) return 0;
   return R.w * Math.pow(Math.sin(Math.PI * t), 0.55);
 }
+
+// half width of the ridge rock at height y (track space): shared by collision and the ridge mesh
+export function ridgeHalf(s, y, yMin) {
+  const rw = ridgeAt(s); if (rw <= 0) return 0;
+  return rw + Math.max(0, 10 * (1 - (y - yMin) / 24)) * Math.min(1, rw / 8); // the foot spreads near the floor
+}
+export const TUNNEL_R = 46 - 7; // flyable radius of the tube
 
 export function clampToBounds(s, x, y) {
   const b = bounds(s);

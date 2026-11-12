@@ -10,6 +10,7 @@ float fbm3(vec3 p){ float s=0., a=.5; for(int i=0;i<4;i++){ s+=a*vnoise(p); p*=2
 `;
 
 const ROCK_FN = /* glsl */`
+float gSalt = 0.0;
 vec3 rockColor(vec3 p, vec3 n){
   float w = fbm3(p*0.012)*2.2 + vnoise(p*0.09)*0.5;
   float band = p.y*0.085 + w*0.4;
@@ -27,12 +28,27 @@ vec3 rockColor(vec3 p, vec3 n){
   float fl = smoothstep(0.70,0.92,n.y);
   // salt lake around the start (reference: white crust with hexagonal cracks)
   float salt = uSalt.w * (1.0 - smoothstep(uSalt.z * 0.65, uSalt.z, length(p.xz - uSalt.xy))) * smoothstep(0.85, 0.97, n.y);
-  vec2 hq = p.xz * 0.055; vec2 hr = vec2(1.0, 1.732); vec2 hh = hr * 0.5;
-  vec2 ha = mod(hq, hr) - hh; vec2 hb = mod(hq - hh, hr) - hh; vec2 hg = dot(ha, ha) < dot(hb, hb) ? ha : hb;
-  float hx = max(dot(abs(hg), normalize(vec2(1.0, 1.732))), abs(hg.x));
-  float crack = smoothstep(0.44, 0.5, hx) * (0.6 + 0.4 * vnoise(p * 0.3));
-  vec3 saltC = vec3(0.92, 0.89, 0.85) * (0.9 + 0.1 * vnoise(p * 0.15)) * (1.0 - 0.45 * crack);
-  return mix(mix(col, sand, fl), saltC, salt);
+  vec3 base = mix(col, sand, fl);
+  gSalt = salt;
+  if (salt < 0.002) return base;
+  // irregular polygon cells (voronoi edges), cracks of varying width with a bright raised rim
+  vec2 sq = p.xz * 0.05 + vec2(vnoise(p * 0.02), vnoise(p * 0.02 + 5.0)) * 0.7;
+  vec2 si = floor(sq), sf = fract(sq); float d1 = 8.0, d2 = 8.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j));
+    vec2 o = vec2(hash3(vec3(si + g, 1.7)), hash3(vec3(si + g, 9.1)));
+    vec2 rr = g + o - sf; float d = dot(rr, rr);
+    if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+  }
+  float ed = sqrt(d2) - sqrt(d1);
+  float wv = 0.035 + 0.075 * vnoise(p * 0.021 + 3.0);
+  float crack = 1.0 - smoothstep(wv * 0.35, wv, ed);
+  float rim = smoothstep(wv * 0.9, wv * 1.6, ed) * (1.0 - smoothstep(wv * 1.6, wv * 3.6, ed));
+  // warm white crust, brighter than rock (the violet sky fill is neutralised in the lighting below)
+  vec3 saltC = vec3(1.05, 1.0, 0.92) * (0.93 + 0.07 * vnoise(p * 0.15));
+  saltC = mix(saltC, vec3(1.15, 1.1, 1.02), rim * 0.6);
+  saltC = mix(saltC, vec3(0.45, 0.38, 0.3), crack * 0.8);
+  return mix(base, saltC, salt);
 }
 `;
 
@@ -54,9 +70,10 @@ export function makeRockMaterial({ portals = null, tint = 1 } = {}) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm;\nuniform vec3 uPortA,uDirA,uPortB,uDirB; uniform float uPR; uniform float uTint; uniform vec4 uSalt;\n' + GLSL_NOISE + ROCK_FN)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-        { vec3 d = vWPos-uPortA; float al = dot(d,uDirA); if (abs(al)<34.0 && length(d-al*uDirA)<uPR) discard; }
-        { vec3 d = vWPos-uPortB; float al = dot(d,uDirB); if (abs(al)<34.0 && length(d-al*uDirB)<uPR) discard; }`)
-      .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= rockColor(vWPos, normalize(vWNrm)) * uTint;');
+        { vec3 d = vWPos-uPortA; float al = dot(d,uDirA); if (abs(al)<46.0 && length(d-al*uDirA)<uPR) discard; }
+        { vec3 d = vWPos-uPortB; float al = dot(d,uDirB); if (abs(al)<46.0 && length(d-al*uDirB)<uPR) discard; }`)
+      .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= rockColor(vWPos, normalize(vWNrm)) * uTint;')
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(1.35, 1.75, 0.55), gSalt); // salt: the violet sky fill turns neutral');
   };
   return m;
 }

@@ -20,7 +20,7 @@ export async function loadShipModels(keys, onProgress = () => {}) {
   await Promise.all(keys.map(async (key) => {
     const buf = embedded && embedded[key] ? b64ToBuffer(embedded[key]) : await (await fetch(`models/${key}.glb`)).arrayBuffer();
     const gltf = await loader.parseAsync(buf, '');
-    const entry = { parts: [], turbines: [], meta: {}, ao: null };
+    const entry = { parts: [], turbines: [], meta: {}, ao: null, edge: null };
     gltf.scene.updateMatrixWorld(true);
     gltf.scene.traverse((o) => {
       if (o.userData && o.userData.rr) entry.meta = JSON.parse(o.userData.rr);
@@ -28,6 +28,7 @@ export async function loadShipModels(keys, onProgress = () => {}) {
       if (o.name.startsWith('TURBINE')) { entry.turbines.push({ geo: o.geometry, pos: o.getWorldPosition(new THREE.Vector3()) }); return; }
       const role = (o.material.name || 'dark').replace(/^rr_/, '');
       if (o.material.aoMap && !entry.ao) entry.ao = o.material.aoMap;
+      if (o.material.emissiveMap && !entry.edge) { entry.edge = o.material.emissiveMap; entry.edge.colorSpace = THREE.NoColorSpace; entry.edge.needsUpdate = true; } // baked edge mask (not light)
       const geo = o.geometry.clone(); geo.applyMatrix4(o.matrixWorld); geo.computeBoundingSphere();
       entry.parts.push({ geo, role });
     });
@@ -51,14 +52,15 @@ function flameMaterial(color) {
 
 // Panel lines, rivets and racing stripes in object space plus a darker belly.
 // stripe = [inner |x|, outer |x|, min y, enabled]
-function paintShader(mat, stripeColor, stripe, damage) {
-  const U = { uStripeCol: { value: new THREE.Color(stripeColor) }, uStripe: { value: new THREE.Vector4(...stripe) }, uDamage: damage };
+const NO_EDGE = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); NO_EDGE.needsUpdate = true;
+function paintShader(mat, stripeColor, stripe, damage, edge = null) {
+  const U = { uStripeCol: { value: new THREE.Color(stripeColor) }, uStripe: { value: new THREE.Vector4(...stripe) }, uDamage: damage, uEdge: { value: edge || NO_EDGE } };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vOP;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvOP = position;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-      varying vec3 vOP; uniform vec3 uStripeCol; uniform vec4 uStripe; uniform float uDamage;
+      varying vec3 vOP; uniform vec3 uStripeCol; uniform vec4 uStripe; uniform float uDamage; uniform sampler2D uEdge;
       float rrLine(float v, float s){ return abs(fract(v / s + 0.5) - 0.5) * s; }
       float rrAA(float d, float w){ float fw = fwidth(d) + 1e-4; return 1.0 - smoothstep(w - fw, w + fw, d); }
       float rrH(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
@@ -85,7 +87,17 @@ function paintShader(mat, stripeColor, stripe, damage) {
       float rrTone = 0.9 + 0.14 * rrH(vec3(floor(vOP.x / 1.15), floor(rrZ / 1.7), 1.0)); // panels differ slightly in tone
       diffuseColor.rgb *= (1.0 - 0.72 * rrPanel) * mix(0.72, 1.0, smoothstep(-0.9, 0.4, vOP.y)) * (0.93 + 0.08 * rrG) * rrTone;
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.55 + vec3(0.08), rrWear * 0.35);
-      float rrRough = rrG;
+      float rrRough = rrG; float rrChip = 0.0;
+      #ifdef USE_AOMAP
+      { // baked masks: convex edges lose paint down to bare metal, cavities collect grime
+        float rrAO = texture2D(aoMap, vAoMapUv).r, rrEd = texture2D(uEdge, vAoMapUv).r * smoothstep(0.55, 0.85, rrAO);
+        float rrBreak = rrN(vOP * 7.0) * 0.55 + rrN(vOP * 2.2 + 4.0) * 0.45;
+        rrChip = smoothstep(0.62, 0.8, rrEd * 0.75 + rrBreak * 0.55) * rrFade;
+        diffuseColor.rgb *= 1.0 + rrEd * 0.1;
+        diffuseColor.rgb *= mix(vec3(0.5, 0.44, 0.38), vec3(1.0), smoothstep(0.2, 0.85, rrAO));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.5, 0.51, 0.53), rrChip * 0.85);
+      }
+      #endif
       // battle damage (damage stages reference): scorched patches spread with damage, embers glow in them when badly hurt
       float rrB = rrN(vOP * 0.9 + 11.0) * 0.65 + rrN(vOP * 3.6) * 0.35;
       float rrBurn = smoothstep(1.02 - uDamage * 0.75, 1.1 - uDamage * 0.75, rrB);
@@ -93,17 +105,18 @@ function paintShader(mat, stripeColor, stripe, damage) {
       float rrEmber = rrBurn * smoothstep(0.5, 0.85, uDamage) * (1.0 - smoothstep(0.0, 0.05, abs(rrN(vOP * vec3(2.2, 2.2, 1.1) + 5.0) - 0.5))); // glowing cracks
       rrRough = mix(rrRough, 1.0, rrBurn * 0.6);`)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>' + String.fromCharCode(10) + 'totalEmissiveRadiance += vec3(1.0, 0.38, 0.06) * rrEmber * 2.5;')
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + rrPanel * 0.35 + (rrRough - 0.5) * 0.18, 0.04, 1.0);');
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(mix(roughnessFactor + rrPanel * 0.35 + (rrRough - 0.5) * 0.18, 0.32, rrChip), 0.04, 1.0);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(metalnessFactor, 0.9, rrChip);');
   };
   mat.customProgramCacheKey = () => 'rr-paint';
   return mat;
 }
 
-export function makeMaterials(liv, finishKey = 'gloss', meta = {}, ao = null) {
+export function makeMaterials(liv, finishKey = 'gloss', meta = {}, ao = null, edge = null) {
   const fin = FINISHES.find(f => f.key === finishKey) || FINISHES[0];
   const withAO = (m) => { if (ao) { m.aoMap = ao; m.aoMapIntensity = 1; } return m; };
   const damage = { value: 0 }; // shared by all painted parts of this ship
-  const paint = (hex, stripe = [0, 0, 0, 0]) => withAO(paintShader(new THREE.MeshPhysicalMaterial({ color: hex, metalness: fin.metalness, roughness: fin.roughness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.08 }), liv.accent, stripe, damage));
+  const paint = (hex, stripe = [0, 0, 0, 0]) => withAO(paintShader(new THREE.MeshPhysicalMaterial({ color: hex, metalness: fin.metalness, roughness: fin.roughness, clearcoat: fin.clearcoat, clearcoatRoughness: 0.08 }), liv.accent, stripe, damage, edge));
   const std = (color, metalness, roughness, side = THREE.FrontSide) => withAO(new THREE.MeshStandardMaterial({ color, metalness, roughness, side }));
   const neonColor = new THREE.Color(liv.neon);
   const st = meta.stripe || [0, 0, 0], band = meta.band || [0, 0];
@@ -142,7 +155,7 @@ export function buildShip(shipKey, liv, finish = 'gloss', number = ++racerNum) {
   const D = MODELS[shipKey];
   if (!D) throw new Error('ship model not loaded: ' + shipKey);
   const meta = D.meta;
-  const M = makeMaterials(liv, finish, meta, D.ao);
+  const M = makeMaterials(liv, finish, meta, D.ao, D.edge);
   const g = new THREE.Group(); const body = new THREE.Group(); g.add(body);
   const refs = { flames: [], glows: [], turbines: [], lights: [], mats: M, exits: (meta.engines || []).map(e => V(...e.exit)), setDamage: (d) => { M.damage.value = d; } };
   for (const p of D.parts) {

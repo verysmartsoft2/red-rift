@@ -23,7 +23,7 @@ class ParticlePool {
     const mat = new THREE.ShaderMaterial({
       uniforms: { uTex: { value: tex }, uScale: { value: 600 } },
       vertexShader: `attribute float size; attribute float alpha; varying vec3 vC; varying float vA; uniform float uScale;
-        void main(){ vC = color; vA = alpha; vec4 mv = modelViewMatrix*vec4(position,1.0); gl_PointSize = min(size*uScale/max(-mv.z,0.1), 900.0); gl_Position = projectionMatrix*mv; }`,
+        void main(){ vC = color; vec4 mv = modelViewMatrix*vec4(position,1.0); vA = alpha * smoothstep(5.0, 16.0, -mv.z); /* no blobs over the lens */ gl_PointSize = min(size*uScale/max(-mv.z,0.1), 900.0); gl_Position = projectionMatrix*mv; }`,
       fragmentShader: `uniform sampler2D uTex; varying vec3 vC; varying float vA;
         void main(){ vec4 t = texture2D(uTex, gl_PointCoord); float a = t.a*vA; ${additive ? 'gl_FragColor = vec4(vC*a, a);' : 'gl_FragColor = vec4(vC, a);'} }`,
       transparent: true, depthWrite: false, vertexColors: true,

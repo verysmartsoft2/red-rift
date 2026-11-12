@@ -213,9 +213,9 @@ function showMenu() {
 $('startBtn').onclick = () => { audio.init(); if (net.role === 'client') { mpStatus('Гонку запускает хозяин комнаты'); return; } startRace(); };
 $('resumeBtn').onclick = () => togglePause(false);
 $('restartBtn').onclick = () => { togglePause(false); if (net.role === 'client') return; startRace(); };
-$('quitBtn').onclick = () => { togglePause(false); if (net.role === 'host') net.send({ t: 'end' }); showMenu(); };
+$('quitBtn').onclick = () => { togglePause(false); if (net.role === 'host') net.send({ t: 'end' }); if (net.role === 'client') net.send({ t: 'quit' }); showMenu(); };
 $('againBtn').onclick = () => { if (net.role === 'client') { sub('Ждём хозяина комнаты'); return; } startRace(); };
-$('hangarBtn').onclick = () => { if (net.role === 'host') net.send({ t: 'end' }); showMenu(); };
+$('hangarBtn').onclick = () => { if (net.role === 'host') net.send({ t: 'end' }); if (net.role === 'client') net.send({ t: 'quit' }); showMenu(); };
 
 // ---------------- race ----------------
 let race = null, raceGroup = null, shipMeshes = [], caseMeshes = [], ghosts = [], droneSprites = [], holoMeshes = [], wrecks = [];
@@ -236,7 +236,7 @@ function startRace(setup = null) {
   clearRace();
   if (displayShip) { scene.remove(displayShip); displayShip = null; }
   pad.visible = false;
-  race = makeRace(setup);
+  race = makeRace(setup); assignUi(race);
   raceGroup = new THREE.Group(); scene.add(raceGroup);
   race.racers.forEach((r, i) => {
     const m = buildShip(r.def.key, r.livery, r.finish, i + 1); raceGroup.add(m); shipMeshes[i] = m;
@@ -306,10 +306,13 @@ function renderLobby(list) {
   buildMenu();
 }
 function hostLobby() { const list = [profile(), ...mp.guests.values()]; renderLobby(list); net.send({ t: 'lobby', list }); }
+function botTakeover(idx, why) {
+  const r = race && race.racers[idx]; if (!r || !r.remote) return;
+  r.remote = false; r.net = null; r.ai = { ...race.level, steer: 0, climb: 0, jink: 1, fireHold: 0, think: 0, tx: 0, ty: 0 };
+  if (mode === 'race') feed(r.name + ' ' + why + ' — его ведёт бот');
+}
 function hostSend(force) {
   const now = performance.now();
-  // a guest that went silent for 5 s (dropped connection without a close) is handed to a bot
-  for (const [peer, idx] of mp.seats) { const r = race.racers[idx]; if (r && r.remote && r._seen && now - r._seen > 5000) net.emit('leave', peer); }
   if (!force && now - mp.lastSnap < 50) return;
   mp.lastSnap = now; net.send(snapshot(race, mp.outbox)); mp.outbox = [];
 }
@@ -330,10 +333,28 @@ function clientSync(rdt) {
   }
 }
 net.on('join', () => mpStatus('Пилот подключается…'));
+// heartbeat: everybody pings once a second; a peer silent for 4 s is gone (closing a tab or losing Wi-Fi often sends no 'close')
+mp.seen = new Map();
+setInterval(() => {
+  if (!net.role) return;
+  const now = performance.now();
+  net.send({ t: 'ping' });
+  if (net.role === 'host') {
+    for (const peer of net.guests) { const t = mp.seen.get(peer); if (t && now - t > 4000) { mp.seen.delete(peer); net.drop(peer); net.emit('leave', peer); } }
+  } else if (mp.hostSeen && now - mp.hostSeen > 5000) { mp.hostSeen = 0; net.emit('leave', 'host'); }
+}, 1000);
+function uniqueName(name, from) {
+  const taken = new Set([S.name, ...[...mp.guests.entries()].filter(([k]) => k !== from).map(([, p]) => p.name)]);
+  if (!taken.has(name)) return name;
+  for (let k = 2; ; k++) if (!taken.has(name + ' ' + k)) return name + ' ' + k;
+}
 net.on('msg', (d, from) => {
   if (!net.role) return; // stale message after leaving the room
+  if (net.role === 'host') mp.seen.set(from, performance.now()); else mp.hostSeen = performance.now();
+  if (d.t === 'ping') return;
   if (net.role === 'host') {
-    if (d.t === 'hello') { mp.guests.set(from, d.p); hostLobby(); mpStatus('В комнате пилотов: ' + (mp.guests.size + 1) + ' из 3'); }
+    if (d.t === 'hello') { d.p.name = uniqueName(String(d.p.name || 'ПИЛОТ').slice(0, 12), from); mp.guests.set(from, d.p); hostLobby(); mpStatus('В комнате пилотов: ' + (mp.guests.size + 1) + ' из 3'); }
+    else if (d.t === 'quit') { const idx = mp.seats.get(from); if (idx != null) { botTakeover(idx, 'ушёл в ангар'); mp.seats.delete(from); } }
     else if (d.t === 'i' && race) {
       const r = race.racers[mp.seats.get(from)]; if (!r || !r.remote) return;
       r.input.steer = d.steer; r.input.climb = d.climb; r.input.fire = d.fire; r.input.brake = d.brake;
@@ -353,7 +374,7 @@ net.on('leave', (peer) => {
   if (net.role === 'host') {
     const p = mp.guests.get(peer); mp.guests.delete(peer);
     const idx = mp.seats.get(peer); mp.seats.delete(peer);
-    if (race && idx != null && race.racers[idx]) { const r = race.racers[idx]; r.remote = false; r.net = null; r.ai = { ...race.level, steer: 0, climb: 0, jink: 1, fireHold: 0, think: 0, tx: 0, ty: 0 }; if (mode === 'race') feed(r.name + ' отключился — его ведёт бот'); }
+    if (idx != null) botTakeover(idx, 'отключился');
     hostLobby(); mpStatus(p ? p.name + ' вышел из комнаты' : 'Пилот вышел');
   } else {
     net.leave(); renderLobby([]); if (mode !== 'menu') showMenu(); mpStatus('Связь с хозяином комнаты потеряна. Можно войти в комнату снова.');
@@ -363,7 +384,7 @@ net.on('error', (e) => mpStatus('Ошибка сети: ' + ((e && (e.message ||
 $('mpHost').onclick = async () => {
   audio.init(); mpStatus('Создаём комнату…');
   try {
-    const code = await net.host(); mp.guests.clear();
+    const code = await net.host(); mp.guests.clear(); mp.seen.clear();
     const url = location.origin + location.pathname + '?room=' + code;
     $('mpUrl').value = url; $('mpLink').hidden = false; $('mpCode').value = code;
     mpStatus('Комната ' + code + ' открыта. Отправьте ссылку друзьям (до 2 гостей).'); hostLobby();
@@ -372,7 +393,7 @@ $('mpHost').onclick = async () => {
 $('mpJoin').onclick = async () => {
   const code = $('mpCode').value.trim().toUpperCase(); if (code.length < 4) { mpStatus('Введите код комнаты'); return; }
   audio.init(); mpStatus('Подключаемся к комнате ' + code + '…');
-  try { await net.join(code); net.send({ t: 'hello', p: profile() }); mpStatus('Подключено. Ждём хозяина…'); $('mpLink').hidden = true; renderLobby([]); }
+  try { await net.join(code); mp.hostSeen = performance.now(); net.send({ t: 'hello', p: profile() }); mpStatus('Подключено. Ждём хозяина…'); $('mpLink').hidden = true; renderLobby([]); }
   catch (e) { mpStatus('Не удалось войти: ' + (e.message || e.type || e)); net.leave(); renderLobby([]); }
 };
 $('mpLeave').onclick = () => { if (net.role === 'host') net.send({ t: 'end' }); net.leave(); mp.guests.clear(); mp.seats.clear(); $('mpLink').hidden = true; renderLobby([]); mpStatus('Вы вышли из комнаты'); };
@@ -430,15 +451,20 @@ function readInput() {
     const b = (i) => gp.buttons[i] && gp.buttons[i].pressed;
     if (b(7)) fire = true; if (b(6)) brake = true;
     const ed = (i, fn) => { if (b(i) && !padPrev[i]) fn(); padPrev[i] = b(i); };
-    ed(0, () => edge.missile = true); ed(2, () => edge.item = true); ed(3, () => edge.ability = true); ed(1, toggleMissileCam); ed(9, () => togglePause());
+    ed(0, () => edge.missile = true); ed(2, () => edge.item = true); ed(3, () => edge.ability = true); ed(1, toggleMissileCam); ed(9, () => togglePause()); ed(5, () => { camMode = (camMode + 1) % 3; }); ed(8, () => { camMode = (camMode + 1) % 3; });
   }
   steer += touch.steer; climb += touch.climb; fire = fire || touch.fire; brake = brake || touch.brake;
   const inp = race.player.input;
   inp.steer = Math.max(-1, Math.min(1, steer)); inp.climb = Math.max(-1, Math.min(1, climb));
   inp.fire = fire; inp.brake = brake;
+  if (race.player.protect > 0 && race.started && (edge.missile || edge.item || fire) && subT <= 0) sub('ОРУЖИЕ ВКЛЮЧИТСЯ ЧЕРЕЗ ' + Math.ceil(race.player.protect) + ' С', 0.8);
   if (edge.missile) { inp.missile = true; edge.missile = false; }
   if (edge.item) { inp.item = true; edge.item = false; }
-  if (edge.ability) { inp.ability = true; edge.ability = false; }
+  if (edge.ability) { // Q: the ship's own feature; say when it is still recharging instead of ignoring the key
+    const P = race.player;
+    if (P.abilityCd > 0 && !P.dead && race.started) { sub(P.def.ability.name + ' · ПЕРЕЗАРЯДКА ' + Math.ceil(P.abilityCd) + ' С', 0.9); const sl = $('hAbility'); sl.classList.remove('deny'); void sl.offsetWidth; sl.classList.add('deny'); }
+    inp.ability = true; edge.ability = false;
+  }
 }
 
 // ---------------- touch controls ----------------
@@ -502,7 +528,20 @@ function feed(html) { const d = el('div', '', html); $('hFeed').prepend(d); setT
 // racer colour for UI: the livery's main paint, lifted so it reads on the dark HUD
 const _uc = new THREE.Color(), _hsl = {};
 function uiColor(liv) { _uc.set(liv.primary).getHSL(_hsl); _uc.setHSL(_hsl.h, Math.max(_hsl.s, _hsl.s > 0.12 ? 0.6 : 0), Math.min(0.78, Math.max(0.58, _hsl.l))); return '#' + _uc.getHexString(); }
-const nameOf = (r) => `<span style="color:${uiColor(r.livery)}">${r.name}</span>`;
+function assignUi(rc) {
+  const used = [];
+  for (const r of rc.racers) {
+    _uc.set(r.livery.primary).getHSL(_hsl);
+    if (_hsl.s < 0.25) _uc.set(r.livery.neon).getHSL(_hsl); // grey paint: the livery's neon identifies the pilot
+    let h = _hsl.h; const dh = (u) => { const d = Math.abs(u - h); return Math.min(d, 1 - d); };
+    for (let k = 0; k < 12 && used.some(u => dh(u) < 0.13); k++) h = (h + 0.07) % 1;
+    used.push(h);
+    _uc.setHSL(h, Math.max(0.68, _hsl.s), Math.min(0.72, Math.max(0.6, _hsl.l)));
+    r.ui = '#' + _uc.getHexString();
+  }
+}
+const ui = (r) => r.ui || uiColor(r.livery);
+const nameOf = (r) => `<span style="color:${ui(r)}">${r.name}</span>`;
 function center(t, pop = false) { const c = $('hCenter'); c.textContent = t; if (pop) { c.classList.remove('popin'); void c.offsetWidth; c.classList.add('popin'); } }
 let subT = 0; function sub(t, dur = 1.6) { $('hSub').textContent = t; subT = dur; }
 // pickup card: what the case gave and what it does
@@ -532,7 +571,7 @@ function processEvents() {
       case 'scrape': { const p = toWorld(e.s, e.x, e.y, tv).clone(); fx.sparks(p, worldNormal(e.s, e.nx, e.ny), 14, 0xffd080, 50); if (e.r === P.id) { audio.play('scrape'); hitShake = Math.min(1, hitShake + 0.15); } break; }
       case 'crash': case 'bump': {
         const p = toWorld(e.s, e.x, e.y, tv).clone(); fx.sparks(p, tv2.set(0, 1, 0), 40, 0xffc070, 80); fx.explosion(p, 0.3, { debris: 6, debrisColor: 0x8a4428, ring: false });
-        if (e.r === P.id || e.a === P.id || e.b === P.id) { hitShake = 1; audio.play('hurt'); if (e.type === 'crash') sub('СТОЛКНОВЕНИЕ!'); }
+        if (e.r === P.id || e.a === P.id || e.b === P.id) { hitShake = 1; audio.play('clang'); audio.play('hurt'); if (e.type === 'crash') sub('СТОЛКНОВЕНИЕ!'); } else sfx('clang', p);
         break;
       }
       case 'rail': { const a = toWorld(e.s0, e.x0, e.y0, tv).clone(), b = toWorld(e.s1, e.x1, e.y1, tv2).clone(); fx.railTrail(a, b, e.color); sfx('rail', a); break; }
@@ -577,7 +616,7 @@ function processEvents() {
         if (r !== P && ['nova', 'chrono', 'emp'].includes(e.item)) feed(`${nameOf(r)} → ${ITEMS.find(i => i.key === e.item).name}`);
         break;
       }
-      case 'ability': if (e.r === P.id) audio.play('ability'); break;
+      case 'ability': if (e.r === P.id) { audio.play('ability'); sub(P.def.ability.name + '!', 1.1); } break;
       case 'ring': if (e.r === P.id) { audio.play('ring'); } break;
       case 'overheat': if (e.r === P.id) { audio.play('overheat'); sub('ПЕРЕГРЕВ'); } break;
       case 'finish': {
@@ -646,7 +685,7 @@ function updateRaceVisuals(dt, rdt) {
       if (Math.random() < dt * 14) { const wp = m.userData.body.localToWorld(ex.clone()); fx.add.emit(wp, new THREE.Vector3((Math.random() - 0.5) * 3, 1.5, (Math.random() - 0.5) * 3), new THREE.Color(0.95, 0.4, 0.08), 1.1, 0.2, { grow: 1 }); if (Math.random() < 0.5) fx.smoke.emit(wp, new THREE.Vector3(0, 3, 0), new THREE.Color(0x141210), 2.2, 1.6, { grow: 6, alpha: 0.6 }); }
     }
     if (r.fx.emp > 0 && Math.random() < 0.5) fx.add.emit(tv2.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 10)), new THREE.Vector3(), new THREE.Color(0x60b0ff), 1.5, 0.12);
-    if (r.fx.slow > 0 && Math.random() < 0.6) fx.add.emit(pos, new THREE.Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8), new THREE.Color(0xa05cff), 2.5, 0.5);
+    if (r.fx.slow > 0 && Math.random() < (r === race.player ? 0.2 : 0.6)) fx.add.emit(pos, new THREE.Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8), new THREE.Color(0xa05cff), 2.5, 0.5);
     if (r.fx.phase > 0 && Math.random() < 0.8) fx.add.emit(pos, new THREE.Vector3(), new THREE.Color(0xffffff), 4, 0.25);
     if (r.charge > 0) fx.add.emit(tv2.copy(pos).addScaledVector(f0.t, 8), new THREE.Vector3(), new THREE.Color(r.laser.color), 1 + r.charge * 5, 0.05);
     if (r !== P) { const near = pos.distanceTo(camera.position) < 22; if (near && !r._near) sfx('flyby', pos); r._near = near; }
@@ -776,7 +815,7 @@ function minimap() {
   mmx.lineWidth = 2; mmx.strokeStyle = 'rgba(41,243,255,0.7)'; mmx.stroke();
   for (const r of race.racers) {
     if (r.dead) continue; const i = Math.floor(wrapS(r.dist) / TRACK.ds) % TRACK.n;
-    mmx.fillStyle = uiColor(r.livery); mmx.beginPath(); mmx.arc(X(TRACK.px[i]), Z(TRACK.pz[i]), r.human ? 6 : 4, 0, 7); mmx.fill();
+    mmx.fillStyle = ui(r); mmx.beginPath(); mmx.arc(X(TRACK.px[i]), Z(TRACK.pz[i]), r.human ? 6 : 4, 0, 7); mmx.fill();
     if (r.human) { mmx.strokeStyle = '#fff'; mmx.lineWidth = 2; mmx.stroke(); }
   }
 }
@@ -821,8 +860,8 @@ function updateHUD(rdt) {
     hudT = 0.2;
     const st = $('hStand'); st.innerHTML = '';
     for (const r of race.order || race.racers) {
-      const li = el('li', (r.human ? 'me ' : '') + (r.dead ? 'dead' : ''));
-      const sw = el('i'); sw.style.background = uiColor(r.livery);
+      const li = el('li', (r === race.player ? 'me ' : r.human ? 'mate ' : '') + (r.dead ? 'dead' : ''));
+      const sw = el('i'); sw.style.background = ui(r);
       const lead = race.order[0];
       const gap = r === lead ? (r.finished ? 'ФИНИШ' : 'ЛИДЕР') : (r.finished ? fmt(r.finishTime) : '−' + Math.max(0, Math.round(lead.dist - r.dist)) + ' м');
       li.append(el('span', '', r.place), sw, el('span', '', r.name), el('span', '', gap));
@@ -856,7 +895,7 @@ function updateHUD(rdt) {
     if (sp.z > 1 || Math.abs(sp.x) > 1.1 || Math.abs(sp.y) > 1.1) continue;
     let t = tagPool[n]; if (!t) { t = el('div', 'tag'); t.innerHTML = '<span></span><i><b></b></i>'; tags.appendChild(t); tagPool.push(t); }
     t.style.display = ''; t.style.left = ((sp.x + 1) / 2 * innerWidth) + 'px'; t.style.top = ((1 - sp.y) / 2 * innerHeight) + 'px';
-    t.firstChild.textContent = `${r.name} ${Math.round(d)}м`; t.firstChild.style.color = uiColor(r.livery);
+    t.firstChild.textContent = `${r.name} ${Math.round(d)}м`; t.firstChild.style.color = ui(r);
     t.lastChild.firstChild.style.width = Math.max(0, r.hp / r.maxHp * 100) + '%';
     n++;
   }
@@ -890,7 +929,7 @@ function showResults() {
   const place = rows.findIndex(x => x.r === P) + 1;
   $('resTitle').textContent = place === 1 ? 'ПОБЕДА' : `${place} МЕСТО`;
   let html = '<tr><th>МЕСТО</th><th>ПИЛОТ</th><th>САМОЛЁТ</th><th>ВРЕМЯ</th><th>СБИЛ</th><th>ПОТЕРИ</th></tr>';
-  rows.forEach((x, i) => { html += `<tr class="${x.r === P ? 'me' : ''}"><td>${i + 1}</td><td style="color:${uiColor(x.r.livery)}">${x.r.name}</td><td>${x.r.def.name}</td><td>${fmt(x.t)}${x.r.finished ? '' : '*'}</td><td>${x.r.kills}</td><td>${x.r.deaths}</td></tr>`; });
+  rows.forEach((x, i) => { html += `<tr class="${x.r === P ? 'me' : ''}"><td>${i + 1}</td><td style="color:${ui(x.r)}">${x.r.name}</td><td>${x.r.def.name}</td><td>${fmt(x.t)}${x.r.finished ? '' : '*'}</td><td>${x.r.kills}</td><td>${x.r.deaths}</td></tr>`; });
   html += `<tr><td colspan="6" class="small">Лучший круг: ${fmt(bestLap)} · уровень ИИ: ${AI_LEVELS[S.diff].name}${rows.some(x => !x.r.finished) ? ' · * расчётное время' : ''}</td></tr>`;
   $('resTable').innerHTML = html;
 }
@@ -981,10 +1020,10 @@ function loop() {
     // cinematic post
     const slow = 1 - timeScale;
     const boost = (P.fx.boost > 0 || P.fx.dash > 0 || P.fx.ring > 0) ? 1 : 0;
-    cinema.uniforms.uDesat.value = slow * 0.55 + (P.fx.slow > 0 ? 0.3 : 0);
+    cinema.uniforms.uDesat.value = Math.min(0.5, slow * 0.55 + (P.fx.slow > 0 ? 0.22 : 0));
     cinema.uniforms.uAberr.value = 0.001 + slow * 0.01 + boost * 0.002 + hurt * 0.006 + (missileCam ? 0.004 : 0);
     cinema.uniforms.uBlur.value = boost * 0.45 + (missileCam ? 0.9 : 0) + Math.max(0, P.speed - 100) * 0.008;
-    cinema.uniforms.uRed.value = Math.max(hurt, P.hp / P.maxHp < 0.3 && !P.dead ? 0.35 + Math.sin(gtime * 6) * 0.15 : 0);
+    cinema.uniforms.uRed.value = Math.max(hurt, P.hp / P.maxHp < 0.3 && !P.dead ? 0.3 + Math.sin(gtime * 6) * 0.12 : 0) * (P.fx.slow > 0 ? 0.5 : 1);
     cinema.uniforms.uEmp.value = P.fx.emp > 0 ? 1 : empFx;
     cinema.uniforms.uTint.value.set(1 + slow * 0.05, 1 - slow * 0.05, 1 + slow * 0.15);
     $('hSlow').hidden = timeScale > 0.7;

@@ -2,7 +2,7 @@
 // cliff exit, stone arches, destructible spires, flagship wreck, force fields, neon guides, sky.
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as THREE from 'three';
-import { S, ridgeAt, TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
+import { S, ridgeAt, ridgeHalf, TRACK, FEATURES, RANGES, TYPE_NAMES, SECTOR_INFO, VALLEY_FLOOR, frameAt, newFrame, toWorld, idx, bounds } from './track.js';
 import { fbm, ridged, noise2, smooth, lerp, clamp, rng } from './noise.js';
 import { makeRockMaterial, forceFieldMaterial, softTex, smokeTex } from './shaders.js';
 import { buildCapitalFleet } from './capital.js';
@@ -66,6 +66,9 @@ function computeHeightfield() {
   const [t0, t1] = RANGES.tunnel;
   const fa = frameAt(t0, newFrame()), fb = frameAt(t1, newFrame());
   const H = new Float32Array(N * N);
+  // lowest floor within +-30 m: on steep descents the tilted track 'down' reaches cells of the next samples
+  const floorMin = new Float32Array(T.n);
+  for (let i = 0; i < T.n; i++) { let m = 1e9; for (let j = -15; j <= 15; j++) m = Math.min(m, T.floorY[(i + j + T.n) % T.n]); floorMin[i] = m; }
   for (let zz = 0; zz < N; zz++) for (let xx = 0; xx < N; xx++) {
     const k = zz * N + xx;
     const x = CX - HALF + xx * cell, z = CZ - HALF + zz * cell;
@@ -78,6 +81,9 @@ function computeHeightfield() {
       const fn = fbm(x * 0.01, z * 0.01, 3);
       if (ty === 'tunnel') {
         h = b;
+        // beside the tube ends the open corridor is right there: rise as a wall from it, not as raw desert
+        const io2 = niN[k];
+        if (io2 >= 0) { const d2 = Math.sqrt(ndN[k]), F2 = T.floorY[io2], hw2 = T.hw[io2]; if (d2 < hw2 + 60) h = Math.min(h, lerp(F2, Math.max(b, F2 + 140), smooth(hw2 + 6, hw2 + 50, d2))); }
       } else if (ty === 'start') {
         const edge = hw + 300 + fn * 60;
         h = d < edge ? F + fn * 3 : lerp(F, Math.min(b, F - 40), smooth(edge, edge + 70, d));
@@ -92,13 +98,6 @@ function computeHeightfield() {
         const jag = ridged(x * 0.02, z * 0.02, 3) * 18 * t * (1 - t) * 4;
         h = F + fn * 2.5 + (wallTop - F) * t + jag;
         if (t > 0.02) h = terrace(h, 22);
-        // the split: a rock ridge down the middle divides the canyon into two lanes
-        const rw = ty === 'split' ? ridgeAt(i * T.ds) : 0;
-        if (rw > 0) {
-          const top = F + 150 + 50 * fbm(x * 0.004 + 3, z * 0.004, 3) + ridged(x * 0.02, z * 0.02, 2) * 14;
-          const top2 = Math.max(top, T.ceilY[i] + 45); // never lower than the flight ceiling: no invisible wall above it
-          h = Math.max(h, lerp(h, top2, smooth(rw + 3, rw - 1, d))); // sheer smooth walls (terraces made it a staircase)
-        }
       }
     }
     // mountain over the tunnel, sliced by the two portal planes (gives a sheer cliff at the exit)
@@ -107,7 +106,7 @@ function computeHeightfield() {
       const ea = (x - fa.p.x) * fa.t.x + (z - fa.p.z) * fa.t.z;
       const eb = (x - fb.p.x) * fb.t.x + (z - fb.p.z) * fb.t.z;
       const nearOpen = niN[k] >= 0 && Math.sqrt(ndN[k]) < T.hw[niN[k]] + 90; // never bury another part of the course
-      if (ea > 8 && eb < -8 && !nearOpen) {
+      if (ea > 8 && eb < -16 && !nearOpen) {
         const m = 1 - smooth(330, 540, dT);
         const top = 440 + 110 * fbm(x * 0.002, z * 0.002, 4) + ridged(x * 0.008, z * 0.008) * 40;
         h = Math.max(h, lerp(h, terrace(top, 30), m));
@@ -118,14 +117,15 @@ function computeHeightfield() {
     if (tiT[k] >= 0) {
       const it = tiT[k], dT2 = Math.sqrt(td[k]);
       const ea2 = (x - fa.p.x) * fa.t.x + (z - fa.p.z) * fa.t.z, eb2 = (x - fb.p.x) * fb.t.x + (z - fb.p.z) * fb.t.z;
-      inMountain = ea2 > 8 && eb2 < -8 && td[k] <= ndN[k];
+      inMountain = ea2 > 8 && eb2 < -16 && td[k] <= ndN[k];
       if (inMountain && dT2 < T.hw[it] + 40) h = Math.max(h, T.py[it] + T.hw[it] + 30);
     }
-    // nothing may rise into the flight corridor (except the split ridge)
+    // nothing may rise into the flight corridor (the split ridge is its own mesh)
     const io = niN[k];
     if (io >= 0 && !inMountain) {
-      const dO = Math.sqrt(ndN[k]), rw = TYPE_NAMES[T.type[io]] === 'split' ? ridgeAt(io * T.ds) : 0;
-      if (dO < T.hw[io] + 2 && !(rw > 0 && dO < rw + 4)) h = Math.min(h, T.floorY[io] + 3);
+      const dO = Math.sqrt(ndN[k]);
+      const so = io * T.ds - t1, exitM = so > 0 && so < 220 ? 16 : 6; // the flared gorge mouth gets a wider clean margin
+      if (dO < T.hw[io] + exitM) h = Math.min(h, floorMin[io] + 3); // walls start rising at hw + 6
     }
     H[k] = h;
   }
@@ -240,7 +240,7 @@ function buildTunnel(group) {
     const outer = new THREE.Mesh(new THREE.TorusGeometry(R0 + 9, 4, 6, 8), new THREE.MeshStandardMaterial({ color: 0x2a2d35, metalness: 0.8, roughness: 0.4 }));
     outer.position.copy(f.p); outer.quaternion.copy(fr.quaternion); group.add(outer);
   }
-  return { portalA: frameAt(t0, newFrame()), portalB: frameAt(t1, newFrame()), radius: R0 + 1 };
+  return { portalA: frameAt(t0, newFrame()), portalB: frameAt(t1, newFrame()), radius: R0 + 10 }; // the cut-out covers the tube's rough wall and frame
 }
 
 function displaceGeo(geo, amp, freq, seed = 0) {
@@ -329,16 +329,58 @@ function buildRocks(group, rockMat) {
   inst.forEach((m, i) => { m.count = cnt[i]; m.castShadow = true; m.receiveShadow = true; group.add(m); });
 }
 
+// the split ridge "Клыки": its own mesh, shaped exactly like its collision (ridgeHalf), with fangs above the flight ceiling
+function buildRidge(group, rockMat) {
+  const RG = FEATURES.ridge; if (!RG) return;
+  const f = newFrame(), STEP = 3, LV = 26, row = LV * 2;
+  const n = Math.ceil((RG.s1 - RG.s0) / STEP) + 1;
+  const pos = new Float32Array(n * row * 3), idxs = [];
+  const lv = (l, yBase, yFoot, yC, yTop) => l < 8 ? lerp(yBase, yFoot, Math.pow(l / 7, 0.8)) : l < 18 ? lerp(yFoot, yC, (l - 7) / 10) : lerp(yC, yTop, (l - 17) / 8);
+  for (let k = 0; k < n; k++) {
+    const s = Math.min(RG.s1, RG.s0 + k * STEP);
+    frameAt(s, f);
+    const b = bounds(s), rw = ridgeAt(s);
+    const yBase = b.yMin - 24, yFoot = b.yMin + 24, yC = b.yMax + 4;
+    const fang = 30 + 80 * Math.pow(1 - Math.abs(noise2(s * 0.011, 1.7)), 3) + 25 * Math.pow(1 - Math.abs(noise2(s * 0.037, 4.1)), 6);
+    const yTop = yC + fang * Math.min(1, rw / 10 + 0.25);
+    for (let side = 0; side < 2; side++) for (let q = 0; q < LV; q++) {
+      const l = side ? LV - 1 - q : q, sg = side ? 1 : -1;
+      const y = lv(l, yBase, yFoot, yC, yTop);
+      let w = y <= yC ? ridgeHalf(s, y, b.yMin) : rw * (1 - Math.pow((y - yC) / Math.max(1, yTop - yC), 1.5) * 0.9);
+      // rough rock, displaced inward only so it never pokes out past the collision
+      const rough = 0.4 + 1.3 * (0.5 + 0.5 * noise2(s * 0.05 + sg * 31, y * 0.08)) + 0.8 * (0.5 + 0.5 * noise2(s * 0.19, y * 0.27 + sg * 7));
+      const ledge = 1.1 * smooth(0.55, 0.95, (y / 9) - Math.floor(y / 9));
+      w = Math.max(0.05, w - rough - ledge);
+      const x = sg * w, j = (k * row + side * LV + q) * 3;
+      pos[j] = f.p.x + f.r.x * x + f.u.x * y; pos[j + 1] = f.p.y + f.r.y * x + f.u.y * y; pos[j + 2] = f.p.z + f.r.z * x + f.u.z * y;
+    }
+  }
+  for (let k = 0; k < n - 1; k++) for (let j = 0; j < row - 1; j++) {
+    const a = k * row + j, b2 = a + 1, c = a + row, d = c + 1;
+    idxs.push(a, b2, c, b2, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(idxs); geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, rockMat); m.castShadow = true; m.receiveShadow = true; m.name = 'ridge';
+  group.add(m);
+}
+
 function buildWreckRibs(group) {
   const f = newFrame();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x2b2522, metalness: 0.6, roughness: 0.7 });
-  const plate = new THREE.MeshStandardMaterial({ color: 0x3d3a38, metalness: 0.7, roughness: 0.55, side: THREE.DoubleSide });
+  // the flagship's skeleton: rusted box-section frames with hull plates, stringers and a few lights still burning
+  const mat = new THREE.MeshStandardMaterial({ color: 0x6a3a26, metalness: 0.55, roughness: 0.78 });
+  const plate = new THREE.MeshStandardMaterial({ color: 0x4a4440, metalness: 0.65, roughness: 0.6, side: THREE.DoubleSide });
+  const lampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff5a2a).multiplyScalar(2.4) });
   const r = rng(11);
+  const frames = new THREE.InstancedMesh(new THREE.BoxGeometry(5, 2.2, 13), plate, FEATURES.ribs.length * 14);
+  const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), lampMat, FEATURES.ribs.length * 3);
+  const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), v4 = new THREE.Vector3(), sc4 = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
+  let nf = 0, nl = 0;
   for (const rib of FEATURES.ribs) {
     frameAt(rib.s, f);
     const floor = VALLEY_FLOOR - 4;
     const tilt = (r() - 0.5) * 0.12;
-    const geo = new THREE.TorusGeometry(rib.r, 4.5, 6, 48, Math.PI);
+    const geo = new THREE.TorusGeometry(rib.r, 5, 4, 48, Math.PI); // square section reads as a girder, not a pipe
     const m = new THREE.Mesh(geo, mat);
     const fr = f.r.clone(); fr.y = 0; fr.normalize();
     const ft = new THREE.Vector3().crossVectors(fr, new THREE.Vector3(0, 1, 0)).normalize();
@@ -347,6 +389,21 @@ function buildWreckRibs(group) {
     m.position.set(f.p.x, floor, f.p.z);
     m.castShadow = true; group.add(m);
     rib.cx = f.p.x; rib.cz = f.p.z; rib.floor = floor;
+    // stringer plates around the arc and a few lamps
+    m.updateMatrixWorld(true);
+    for (let k = 0; k < 14; k++) {
+      const a = 0.12 + (k / 13) * (Math.PI - 0.24);
+      v4.set(Math.cos(a) * (rib.r + 5.5), Math.sin(a) * (rib.r + 5.5), 0).applyMatrix4(m.matrixWorld);
+      q4.setFromRotationMatrix(new THREE.Matrix4().makeRotationZ(a - Math.PI / 2)).premultiply(m.quaternion);
+      sc4.set(1, 1, 0.7 + r() * 0.9); m4.compose(v4, q4, sc4); frames.setMatrixAt(nf, m4);
+      frames.setColorAt(nf++, col.setHSL(0.05 + r() * 0.03, 0.35 + r() * 0.2, 0.22 + r() * 0.12));
+    }
+    sc4.set(1, 1, 1);
+    for (let k = 0; k < 3; k++) {
+      const a = 0.35 + r() * (Math.PI - 0.7);
+      v4.set(Math.cos(a) * (rib.r - 5.5), Math.sin(a) * (rib.r - 5.5), 0).applyMatrix4(m.matrixWorld);
+      m4.compose(v4, m.quaternion, sc4); lamps.setMatrixAt(nl++, m4);
+    }
     // hanging hull plates on some ribs
     if (r() < 0.6) {
       const pl = new THREE.Mesh(new THREE.CylinderGeometry(rib.r + 3, rib.r + 3, 26, 24, 1, true, 0, 0.6 + r() * 0.7), plate);
@@ -355,6 +412,7 @@ function buildWreckRibs(group) {
       pl.position.set(f.p.x, floor, f.p.z); pl.castShadow = true; group.add(pl);
     }
   }
+  frames.count = nf; lamps.count = nl; frames.castShadow = true; group.add(frames, lamps);
   // spine beam along the top
   frameAt(FEATURES.wreckS, f);
   const spine = new THREE.Mesh(new THREE.BoxGeometry(8, 8, 300), mat);
@@ -546,6 +604,7 @@ export function buildWorld(scene, renderer, onProgress = () => {}) {
   buildSpires(world, rockMat);
   buildRocks(world, rockMat);
   buildWreckRibs(world);
+  buildRidge(world, rockMat);
   const fires = buildFires(world);
   const ffMats = buildForceFields(world);
   buildGuides(world);

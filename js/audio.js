@@ -2,7 +2,7 @@
 // Buses: sfx -> master, music -> master, both send into a shared reverb (thicker inside the tunnel).
 // play(name, dist, pan): dist in metres dulls and quiets distant sounds, pan in [-1, 1] places them left/right.
 export class Audio {
-  constructor() { this.ctx = null; this.muted = false; this.musicOn = true; this.intensity = 0; }
+  constructor() { this.ctx = null; this.muted = false; this.musicOn = true; this.intensity = 0; this.ext = null; }
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
@@ -22,6 +22,7 @@ export class Audio {
     this.noise = nb;
     this.buildEngine(); this.buildBeam();
     this.startMusic();
+    if (window.RR_MUSIC) this.useTracks(window.RR_MUSIC); // set in index.html when recorded tracks ship with the site
   }
   impulse(sec, decay) {
     const ctx = this.ctx, n = Math.floor(ctx.sampleRate * sec), b = ctx.createBuffer(2, n, ctx.sampleRate);
@@ -29,21 +30,33 @@ export class Audio {
     return b;
   }
   buildEngine() {
-    const ctx = this.ctx;
+    // jet engine, not a synth: brown-noise roar that opens up with speed, a fluttering low rumble,
+    // a turbine whine with a few partials, air hiss, and afterburner crackle on boost
+    const ctx = this.ctx, sr = ctx.sampleRate;
+    const bn = ctx.createBuffer(1, sr * 3, sr), bd = bn.getChannelData(0); let last = 0;
+    for (let i = 0; i < bd.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; bd[i] = last * 3.5; }
+    const cr = ctx.createBuffer(1, sr * 2, sr), cd = cr.getChannelData(0); // sparse pops for the afterburner
+    for (let k = 0; k < 520; k++) { const at = Math.floor(Math.random() * (cd.length - 400)), a = (Math.random() * 0.8 + 0.2) * (Math.random() < 0.5 ? -1 : 1), len = 40 + Math.random() * 260; for (let i = 0; i < len; i++) cd[at + i] += a * Math.exp(-i / (len * 0.25)) * (Math.random() * 0.6 + 0.4); }
+    const loop = (buf) => { const n = ctx.createBufferSource(); n.buffer = buf; n.loop = true; n.start(0, Math.random() * buf.duration); return n; };
     this.eng = ctx.createGain(); this.eng.gain.value = 0; this.eng.connect(this.sfx);
-    this.engF = ctx.createBiquadFilter(); this.engF.type = 'lowpass'; this.engF.frequency.value = 600; this.engF.Q.value = 2; this.engF.connect(this.eng);
-    this.engOsc = [0.996, 1.004, 1.5].map((m, i) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 60 * m; const g = ctx.createGain(); g.gain.value = i === 2 ? 0.35 : 0.5; o.connect(g); g.connect(this.engF); o.start(); return { o, m }; });
-    this.sub = ctx.createOscillator(); this.sub.type = 'sine'; this.sub.frequency.value = 40; const sg = ctx.createGain(); sg.gain.value = 0.5; this.sub.connect(sg); sg.connect(this.eng); this.sub.start();
-    // turbine whine
-    this.whine = ctx.createOscillator(); this.whine.type = 'sine'; this.whine.frequency.value = 1800;
-    this.whineG = ctx.createGain(); this.whineG.gain.value = 0; this.whine.connect(this.whineG); this.whineG.connect(this.sfx); this.whine.start();
-    // wind + afterburner roar
-    const ns = ctx.createBufferSource(); ns.buffer = this.noise; ns.loop = true;
-    this.windF = ctx.createBiquadFilter(); this.windF.type = 'bandpass'; this.windF.frequency.value = 900; this.windF.Q.value = 0.6;
+    this.body = loop(bn); this.engF = ctx.createBiquadFilter(); this.engF.type = 'lowpass'; this.engF.frequency.value = 400; this.engF.Q.value = 0.9;
+    this.engB = ctx.createBiquadFilter(); this.engB.type = 'peaking'; this.engB.frequency.value = 220; this.engB.Q.value = 1.2; this.engB.gain.value = 6;
+    const bodyG = ctx.createGain(); bodyG.gain.value = 0.9; this.body.connect(this.engF); this.engF.connect(this.engB); this.engB.connect(bodyG); bodyG.connect(this.eng);
+    const rum = loop(bn), rf = ctx.createBiquadFilter(); rf.type = 'lowpass'; rf.frequency.value = 95;
+    this.rumG = ctx.createGain(); this.rumG.gain.value = 1.1;
+    const flut = ctx.createOscillator(); flut.frequency.value = 11; const fg = ctx.createGain(); fg.gain.value = 0.4; flut.connect(fg); fg.connect(this.rumG.gain); flut.start(); this.flut = flut;
+    rum.connect(rf); rf.connect(this.rumG); this.rumG.connect(this.eng);
+    this.whineG = ctx.createGain(); this.whineG.gain.value = 0; this.whineG.connect(this.sfx);
+    this.whineF = ctx.createBiquadFilter(); this.whineF.type = 'bandpass'; this.whineF.Q.value = 2.5; this.whineF.frequency.value = 2200; this.whineF.connect(this.whineG);
+    this.whines = [[1, 'triangle', 0.55], [2.03, 'sine', 0.28], [3.07, 'sine', 0.1]].map(([m, type, v]) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = 900 * m; const g = ctx.createGain(); g.gain.value = v; o.connect(g); g.connect(this.whineF); o.start(); return { o, m }; });
+    const vib = ctx.createOscillator(); vib.frequency.value = 5.7; const vg = ctx.createGain(); vg.gain.value = 9; vib.connect(vg); for (const w of this.whines) vg.connect(w.o.detune); vib.start();
+    const ns = loop(this.noise);
+    this.windF = ctx.createBiquadFilter(); this.windF.type = 'bandpass'; this.windF.frequency.value = 900; this.windF.Q.value = 0.5;
     this.wind = ctx.createGain(); this.wind.gain.value = 0; ns.connect(this.windF); this.windF.connect(this.wind); this.wind.connect(this.sfx);
     this.roarF = ctx.createBiquadFilter(); this.roarF.type = 'lowpass'; this.roarF.frequency.value = 500;
-    this.roar = ctx.createGain(); this.roar.gain.value = 0; ns.connect(this.roarF); this.roarF.connect(this.roar); this.roar.connect(this.sfx); this.roar.connect(this.verbIn);
-    ns.start();
+    this.roar = ctx.createGain(); this.roar.gain.value = 0; const rb = loop(bn); rb.connect(this.roarF); this.roarF.connect(this.roar); this.roar.connect(this.sfx); this.roar.connect(this.verbIn);
+    const crk = loop(cr), cf = ctx.createBiquadFilter(); cf.type = 'bandpass'; cf.frequency.value = 1300; cf.Q.value = 0.7;
+    this.crackle = ctx.createGain(); this.crackle.gain.value = 0; crk.connect(cf); cf.connect(this.crackle); this.crackle.connect(this.sfx);
   }
   buildBeam() {
     const ctx = this.ctx;
@@ -55,22 +68,47 @@ export class Audio {
     const lfo = ctx.createOscillator(); lfo.frequency.value = 27; const lg = ctx.createGain(); lg.gain.value = 500; lfo.connect(lg); lg.connect(bf.frequency); lfo.start();
   }
   setMuted(m) { this.muted = m; if (this.master) this.master.gain.setTargetAtTime(m ? 0 : 0.85, this.ctx.currentTime, 0.02); }
-  setIntensity(x) { this.intensity = x; }
+  setIntensity(x) { this.intensity = x; this.mixTracks(); }
+  // recorded music (music/menu.mp3, music/race.mp3) replaces the procedural score when present; missing files keep the synth
+  async useTracks(map) {
+    if (!this.ctx || this.ext) return;
+    const ext = {};
+    await Promise.all(Object.entries(map).map(async ([k, url]) => {
+      try {
+        const r = await fetch(url); if (!r.ok) return;
+        const buf = await this.ctx.decodeAudioData(await r.arrayBuffer());
+        const src = this.ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+        const g = this.ctx.createGain(); g.gain.value = 0; src.connect(g); g.connect(this.mus); src.start();
+        ext[k] = g;
+      } catch (e) { /* offline file or no track: keep the synth */ }
+    }));
+    if (Object.keys(ext).length) { this.ext = ext; this.mixTracks(); }
+  }
+  mixTracks() {
+    if (!this.ctx || !this.ext) return; const t = this.ctx.currentTime, on = this.musicOn ? 1 : 0, I = this.intensity;
+    const { menu, race } = this.ext;
+    if (menu) menu.gain.setTargetAtTime(on * (race ? 1 - I : 1) * 2.2, t, 0.6);
+    if (race) race.gain.setTargetAtTime(on * (menu ? I : 1) * 2.2, t, 0.6);
+  }
   engine(speed, boost, inTunnel) {
     if (!this.ctx) return; const t = this.ctx.currentTime;
-    const f = 42 + speed * 0.5 + boost * 26;
-    for (const { o, m } of this.engOsc) o.frequency.setTargetAtTime(f * m, t, 0.12);
-    this.sub.frequency.setTargetAtTime(f * 0.5, t, 0.12);
-    this.engF.frequency.setTargetAtTime(350 + speed * 7 + boost * 1400, t, 0.12);
-    this.eng.gain.setTargetAtTime(0.1 + boost * 0.06, t, 0.2);
-    this.whine.frequency.setTargetAtTime(1400 + speed * 14 + boost * 900, t, 0.25);
-    this.whineG.gain.setTargetAtTime(0.008 + speed / 26000 + boost * 0.01, t, 0.3);
-    this.wind.gain.setTargetAtTime(0.025 + speed / 2200 + (inTunnel ? 0.07 : 0), t, 0.2);
-    this.windF.frequency.setTargetAtTime(inTunnel ? 420 : 800 + speed * 4, t, 0.25);
-    this.roar.gain.setTargetAtTime(boost * 0.22, t, 0.12); this.roarF.frequency.setTargetAtTime(300 + boost * 900, t, 0.2);
+    const k = Math.min(1.6, speed / 120); // 1 at cruise
+    this.body.playbackRate.setTargetAtTime(0.75 + k * 0.3 + boost * 0.15, t, 0.2);
+    this.engF.frequency.setTargetAtTime(260 + k * 520 + boost * 1100, t, 0.15);
+    this.engB.frequency.setTargetAtTime(160 + k * 90 + boost * 60, t, 0.2);
+    this.eng.gain.setTargetAtTime(0.16 + k * 0.05 + boost * 0.1, t, 0.2);
+    this.flut.frequency.setTargetAtTime(8 + k * 6, t, 0.3);
+    const wf = 620 + speed * 7.5 + boost * 520;
+    for (const { o, m } of this.whines) o.frequency.setTargetAtTime(wf * m, t, 0.35);
+    this.whineF.frequency.setTargetAtTime(wf * 1.8, t, 0.35);
+    this.whineG.gain.setTargetAtTime(0.012 + k * 0.012 + boost * 0.008, t, 0.3);
+    this.wind.gain.setTargetAtTime(0.02 + speed / 2600 + (inTunnel ? 0.06 : 0), t, 0.2);
+    this.windF.frequency.setTargetAtTime(inTunnel ? 420 : 700 + speed * 5, t, 0.25);
+    this.roar.gain.setTargetAtTime(boost * 0.3, t, 0.1); this.roarF.frequency.setTargetAtTime(380 + boost * 1200, t, 0.15);
+    this.crackle.gain.setTargetAtTime(boost * 0.16, t, 0.08);
     this.verbIn.gain.setTargetAtTime(inTunnel ? 0.6 : 0.22, t, 0.4);
   }
-  stopEngine() { if (this.ctx) { const t = this.ctx.currentTime; for (const g of [this.eng, this.whineG, this.wind, this.roar]) g.gain.setTargetAtTime(0, t, 0.15); } }
+  stopEngine() { if (this.ctx) { const t = this.ctx.currentTime; for (const g of [this.eng, this.whineG, this.wind, this.roar, this.crackle]) g.gain.setTargetAtTime(0, t, 0.15); } }
   beamOn(on) { if (this.ctx) this.beam.gain.setTargetAtTime(on ? 0.06 : 0, this.ctx.currentTime, 0.03); }
   // output chain for one-shot sounds: distance lowpass -> stereo pan -> sfx (+ optional reverb send)
   out(dist, pan, send) {
@@ -100,13 +138,14 @@ export class Audio {
     const T = (type, f0, f1, dur, vol, delay = 0, send = 0) => this.tone(type, f0, f1, dur, vol * v, delay, this.out(dist, pan, send));
     const N = (dur, f, vol, q, type, delay = 0, send = 0, f1) => this.noiseHit(dur, f, vol * v, q, type, delay, this.out(dist, pan, send), f1);
     switch (name) {
-      case 'pulse': T('square', 1700, 380, 0.07, 0.045); N(0.03, 6000, 0.03, 1, 'highpass'); break;
+      case 'pulse': T('sawtooth', 2100, 300, 0.09, 0.04); T('sine', 1100, 160, 0.11, 0.06); N(0.035, 7000, 0.035, 1, 'highpass'); T('sine', 90, 50, 0.08, 0.05); break;
       case 'prism': T('sawtooth', 1100, 140, 0.16, 0.06); T('square', 700, 90, 0.12, 0.03, 0.01); N(0.08, 4000, 0.05, 1, 'highpass'); break;
       case 'rail': T('sawtooth', 3200, 50, 0.5, 0.13, 0, 0.3); N(0.35, 7000, 0.12, 1, 'highpass', 0, 0.3); T('sine', 120, 40, 0.4, 0.2); break;
       case 'missile': N(0.9, 2600, 0.2, 2, 'bandpass', 0, 0.2, 600); T('triangle', 260, 900, 0.45, 0.05); break;
       case 'explode': N(1.4, 1100, 0.6, 0.7, 'lowpass', 0, 0.35); T('sine', 110, 28, 0.9, 0.5); N(0.25, 3200, 0.18, 2, 'bandpass', 0.05); break;
       case 'bigexplode': N(2.4, 1400, 0.85, 0.7, 'lowpass', 0, 0.5); T('sine', 80, 18, 1.8, 0.8, 0, 0.3); N(0.5, 5200, 0.28, 1, 'highpass', 0, 0.3); N(1.2, 2400, 0.2, 3, 'bandpass', 0.18, 0.4); break;
-      case 'hit': N(0.09, 3200, 0.12, 2, 'bandpass'); T('square', 820, 220, 0.05, 0.035); break;
+      case 'hit': N(0.09, 3200, 0.12, 2, 'bandpass'); T('square', 820, 220, 0.05, 0.03); [1130, 1790, 2610].forEach((f, i) => T('sine', f, f * 0.97, 0.16, 0.025 / (i + 1))); break;
+      case 'clang': N(0.12, 1800, 0.45, 1.2, 'bandpass', 0, 0.25); T('sine', 75, 38, 0.3, 0.5); [187, 431, 779, 1263].forEach((f, i) => T('triangle', f, f * 0.94, 0.55 - i * 0.08, 0.12 / (i + 1), 0, 0.3)); N(0.4, 5200, 0.12, 3, 'bandpass', 0.02, 0.2, 1800); break;
       case 'hurt': N(0.2, 1500, 0.3, 1.5, 'bandpass'); T('sawtooth', 170, 55, 0.2, 0.14); T('sine', 60, 30, 0.25, 0.25); break;
       case 'scrape': N(0.16, 3800, 0.12, 4, 'bandpass'); break;
       case 'flyby': N(0.9, 900, 0.32, 1.2, 'bandpass', 0, 0.2, 2600); T('sawtooth', 220, 120, 0.8, 0.05); break;
@@ -163,7 +202,7 @@ export class Audio {
       if (next < ctx.currentTime - 0.1) next = ctx.currentTime + 0.05; // skip notes missed while the tab slept
       while (next < ctx.currentTime + 0.3) {
         const I = this.intensity;
-        if (this.musicOn) {
+        if (this.musicOn && !this.ext) {
           const bar = Math.floor(n / 16) % 4, i = n % 16, chord = prog[bar], root = chord[0] - 24;
           if (i === 0) for (const m of chord) for (const det of [-9, 9]) voice('sawtooth', midi(m), next, step * 16, 0.035, 1400 + I * 1200, duck, det);
           if (I > 0.3 || i % 2 === 0) voice('sawtooth', midi(root + bassPat[i]), next, step * 0.9, 0.2, 700 + I * 500);
@@ -178,6 +217,7 @@ export class Audio {
         }
         n++; next += step;
       }
+      this.mixTracks();
       setTimeout(tick, 60);
     };
     tick();

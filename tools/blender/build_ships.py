@@ -506,6 +506,43 @@ def bake_ao(ob, key, size=1024):
     img.pack()
     return img
 
+PAINTED = ('rr_primary', 'rr_secondary', 'rr_accent', 'rr_white', 'rr_gunmetal', 'rr_dark')
+
+def bake_edges(ob, key, size=1024):
+    # edge mask for worn paint: how far the bevelled normal leans away from the face normal.
+    # It travels in the glTF emissive slot of the painted materials (the game reads it as a mask, never as light).
+    img = bpy.data.images.new(f'{key}_edge', size, size, alpha=False); img.generated_color = (0, 0, 0, 1)
+    saved = []
+    for m in ob.data.materials:
+        nt = m.node_tree
+        n = nt.nodes.new('ShaderNodeTexImage'); n.image = img; n.name = 'EDGE'
+        for o in nt.nodes: o.select = False
+        n.select = True; nt.nodes.active = n
+        bev = nt.nodes.new('ShaderNodeBevel'); bev.samples = 8; bev.inputs['Radius'].default_value = 0.05
+        geo = nt.nodes.new('ShaderNodeNewGeometry')
+        dot = nt.nodes.new('ShaderNodeVectorMath'); dot.operation = 'DOT_PRODUCT'
+        nt.links.new(bev.outputs['Normal'], dot.inputs[0]); nt.links.new(geo.outputs['Normal'], dot.inputs[1])
+        sub = nt.nodes.new('ShaderNodeMath'); sub.operation = 'SUBTRACT'; sub.inputs[0].default_value = 1.0
+        nt.links.new(dot.outputs['Value'], sub.inputs[1])
+        mul = nt.nodes.new('ShaderNodeMath'); mul.operation = 'MULTIPLY'; mul.use_clamp = True; mul.inputs[1].default_value = 7.0
+        nt.links.new(sub.outputs['Value'], mul.inputs[0])
+        em = nt.nodes.new('ShaderNodeEmission'); nt.links.new(mul.outputs['Value'], em.inputs['Color'])
+        out = nt.nodes.new('ShaderNodeOutputMaterial'); nt.links.new(em.outputs['Emission'], out.inputs['Surface'])
+        old = [o for o in nt.nodes if o.type == 'OUTPUT_MATERIAL' and o != out]
+        for o in old: o.is_active_output = False
+        out.is_active_output = True
+        saved.append((m, out, old, [bev, geo, dot, sub, mul, em], n))
+    bpy.ops.object.bake(type='EMIT', margin=6, use_clear=True)
+    img.pack()
+    for m, out, old, tmp, n in saved:
+        nt = m.node_tree
+        for t in tmp + [out]: nt.nodes.remove(t)
+        for o in old: o.is_active_output = True
+        b = nt.nodes.get('Principled BSDF')
+        if m.name in PAINTED:
+            nt.links.new(n.outputs['Color'], b.inputs['Emission Color']); b.inputs['Emission Strength'].default_value = 1.0
+    return img
+
 def build(key):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     setup_cycles(64)
@@ -521,6 +558,7 @@ def build(key):
     smooth_by_angle(ship)
     ship.data.validate()
     bake_ao(ship, key, 1024)
+    bake_edges(ship, key, 1024)
     for i, e in enumerate(META['engines']): turbine(i, e)
     ship['rr'] = json.dumps(META)
     tris = sum(len(p.vertices) - 2 for p in ship.data.polygons)
@@ -533,6 +571,9 @@ def build(key):
 
 def render(key):
     sc = bpy.context.scene; setup_cycles(96); sc.cycles.use_denoising = True
+    for m in bpy.data.materials:  # the edge mask rides in the emissive slot only for export
+        b = m.node_tree.nodes.get('Principled BSDF') if m.use_nodes else None
+        if b and m.name in PAINTED: b.inputs['Emission Strength'].default_value = 0.0
     sc.render.resolution_x, sc.render.resolution_y = 1280, 720
     w = sc.world; bg = w.node_tree.nodes['Background']; bg.inputs['Color'].default_value = (0.55, 0.53, 0.52, 1); bg.inputs['Strength'].default_value = 0.7
     sun = bpy.data.objects.new('sun', bpy.data.lights.new('sun', 'SUN')); sun.data.energy = 4.0; sun.data.angle = 0.2; sun.rotation_euler = (math.radians(40), 0, math.radians(30)); sc.collection.objects.link(sun)

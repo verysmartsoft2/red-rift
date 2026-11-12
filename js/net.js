@@ -113,6 +113,7 @@ export class Net {
     for (const c of this.conns.values()) if (c.open) c.send(d);
   }
   get guests() { return [...this.conns.keys()]; }
+  drop(peer) { const c = this.conns.get(peer); this.conns.delete(peer); if (c) { try { c.close(); } catch (e) { /* gone */ } } }
   leave() {
     for (const c of this.conns.values()) { try { c.close(); } catch (e) { /* ignore */ } }
     this.conns.clear();

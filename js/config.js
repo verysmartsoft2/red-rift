@@ -108,8 +108,8 @@ export const ITEMS = [
 export const AI_LEVELS = [
   { key: 'rookie', name: 'НОВИЧОК', speed: 0.9, aim: 0.3, react: 0.9, aggro: 0.3, line: 0.5, rubber: 0.06, dmg: 0.25 },
   { key: 'pilot', name: 'ПИЛОТ', speed: 0.96, aim: 0.55, react: 0.55, aggro: 0.55, line: 0.75, rubber: 0.05, dmg: 0.42 },
-  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04, dmg: 0.62 },
-  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03, dmg: 0.8 },
+  { key: 'ace', name: 'АС', speed: 1.0, aim: 0.8, react: 0.32, aggro: 0.85, line: 0.9, rubber: 0.04, dmg: 0.42 },
+  { key: 'legend', name: 'ЛЕГЕНДА', speed: 1.04, aim: 0.95, react: 0.18, aggro: 1.0, line: 1.0, rubber: 0.03, dmg: 0.5 },
 ];
 
 export const AI_NAMES = ['ВЕКТОР', 'ГАДЮКА', 'ТУМАН', 'ФЕНИКС', 'КОБРА', 'ОРИОН', 'РАЗРЯД', 'СТРИЖ'];

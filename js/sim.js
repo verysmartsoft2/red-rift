@@ -1,5 +1,5 @@
 // Race simulation (DOM-free, fixed 60 Hz). Racers, weapons, items, obstacles, AI.
-import { TRACK, FEATURES, bounds, wrapS, idx, frameAt, newFrame, typeAt, ridgeAt } from './track.js';
+import { TRACK, FEATURES, RANGES, bounds, wrapS, idx, frameAt, newFrame, typeAt, ridgeAt, ridgeHalf, TUNNEL_R } from './track.js';
 import { RACE, SHIPS, LASERS, MISSILES, ITEMS, AI_LEVELS, AI_NAMES, SHIP_LIVERIES } from './config.js';
 import { clamp } from './noise.js';
 
@@ -7,6 +7,9 @@ const L = TRACK.length;
 const CPS = FEATURES.checkpoints; // per-lap checkpoint positions, last one = finish line
 export const dS = (a, b) => { let d = (a - b) % L; if (d > L / 2) d -= L; if (d < -L / 2) d += L; return d; };
 const R = () => Math.random();
+const TUN0 = RANGES.tunnel[0];
+// distance to the tunnel mouth ahead (0..), or -1 when not approaching it
+const toTunnel = (s) => { const d = dS(TUN0, s); return d > 0 && d < 220 ? d : -1; };
 
 let NEXT_ID = 1;
 
@@ -68,7 +71,7 @@ export class Race {
   step(dt) {
     if (!this.started) {
       this.countdown -= dt;
-      if (this.countdown <= 0) { this.started = true; for (const r of this.racers) r.protect = 3; this.emit({ type: 'go' }); }
+      if (this.countdown <= 0) { this.started = true; for (const r of this.racers) { r.protect = 3; r.abilityCd = 0; } /* Q is ready at the start */ this.emit({ type: 'go' }); }
       for (const r of this.racers) { r.speed = 0; }
       return;
     }
@@ -106,8 +109,9 @@ export class Race {
         r.holoTrail.length = 0;
         const b = bounds(wrapS(r.dist)); r.y = clamp(0, b.yMin + 10, b.yMax - 10);
         const rw0 = Math.max(ridgeAt(wrapS(r.dist)), ridgeAt(wrapS(r.dist) + 60)); if (rw0 > 0) r.x = (r.id % 2 ? 1 : -1) * (rw0 + 22);
+        if (r.ai) r.ai.lane = rw0 > 0 ? Math.sign(r.x) : 0; // keep to the lane it respawned in (no grinding across the ridge)
         r.hp = r.maxHp; r.shield = 0; r.heat = 0; r.protect = RACE.protect; r.speed = r.def.cruise * 0.6;
-        r.spawnId++; r.net = null;
+        r.spawnId++; r.net = null; r.spawnAt = this.time;
         this.emit({ type: 'respawn', r: r.id });
       }
       return;
@@ -199,11 +203,17 @@ export class Race {
     }
     // the split ridge in the middle of the canyon is solid rock
     const rw = ridgeAt(s);
-    const rwc = rw > 0 ? rw + 2 + Math.max(0, 10 * (1 - (r.y - b.yMin) / 24)) : 0; // the ridge foot spreads near the floor
+    const rwc = rw > 0 ? ridgeHalf(s, r.y, b.yMin) + 2 : 0; // same shape as the ridge mesh
     if (rw > 0 && Math.abs(r.x) < rwc) { const sg = Math.sign(r.x) || (r.id % 2 ? 1 : -1); r.x = sg * rwc; r.vx = sg * Math.max(Math.abs(r.vx), 6); nx = sg; scraped = true; }
     if (scraped && F.phase <= 0) {
       r.scrape += dt; this.damage(r, RACE.wallDamage * dt, null, 'wall'); r.speed *= 1 - 0.6 * dt;
       if (r.scrape > 0.08) { r.scrape = 0; this.emit({ type: 'scrape', r: r.id, s, x: r.x - nx * 3, y: r.y - ny * 3, nx, ny }); }
+    }
+    // approaching the tube: a funnel eases ships into the circle instead of snapping them at the portal
+    const dT = toTunnel(s);
+    if (dT >= 0) {
+      const m = TUNNEL_R + dT * 0.55, rr = Math.hypot(r.x, r.y);
+      if (rr > m) { const k = m / rr; r.x *= k; r.y *= k; r.vx *= 0.9; r.vy *= 0.9; }
     }
     // obstacles
     if (F.phase <= 0 && r.protect <= 0) this.obstacles(r, s);
@@ -264,7 +274,7 @@ export class Race {
       if (Math.abs(d) < 11 && Math.abs(a.x - b.x) < 9 && Math.abs(a.y - b.y) < 5) {
         const side = a.x >= b.x ? 1 : -1;
         const ma = a.def.hp, mb = b.def.hp;
-        a.vx += side * 30 * mb / (ma + mb) * 2; b.vx -= side * 30 * ma / (ma + mb) * 2;
+        a.vx += side * 12 * mb / (ma + mb) * 2; b.vx -= side * 12 * ma / (ma + mb) * 2; // a nudge, not a kick into the next spire
         a.x += side * 1.5; b.x -= side * 1.5;
         const key = a.id * 8 + b.id; this.ramT = this.ramT || {}; // one hit per contact, not every frame of overlap
         if (this.time - (this.ramT[key] ?? -9) > 0.8) { this.ramT[key] = this.time; this.damage(a, 6 * mb / ma, b, 'ram'); this.damage(b, 6 * ma / mb, a, 'ram'); }
@@ -278,14 +288,14 @@ export class Race {
     if (r.dome > 0 && r.abilityT > 0) { const ab = Math.min(r.dome, amt); r.dome -= ab; amt -= ab; }
     if (r.shield > 0) { const ab = Math.min(r.shield, amt); r.shield -= ab; amt -= ab; }
     if (amt <= 0) return;
-    if (src && src.ai && src !== r && !src.human) amt *= src.ai.dmg ?? 1; // easier levels hit softer
+    if (src && src.ai && src !== r && !src.human) amt *= (src.ai.dmg ?? 1) * (src.lap <= 1 ? 0.75 : 1); // easier levels hit softer; the opening lap is a race
     r.hp -= amt; r.hitFlash = 1;
     if (src) { r.lastHitBy = src.id; r.lastHitT = this.time; }
     if (r.hp <= 0) {
       r.dead = true; r.deaths++; r.respawnT = RACE.respawnDelay; r.item = -1; r.fx.nova = 0; r.fx.drones = 0;
       const recent = r.lastHitBy != null && this.time - (r.lastHitT ?? -99) < 6;
       const killer = src || (recent ? this.racers[r.lastHitBy] : null);
-      if (killer && killer !== r) killer.kills++;
+      if (killer && killer !== r) { killer.kills++; if (killer.ai) killer.ai.spare = { id: r.id, until: this.time + 20 }; } // no spawn camping the same victim
       this.emit({ type: 'kill', victim: r.id, killer: killer ? killer.id : -1, s: wrapS(r.dist), x: r.x, y: r.y, kind });
     }
   }
@@ -616,7 +626,10 @@ export class Race {
         if (best && R() < 0.4 + A.line * 0.5) { tx = best.x; ty = best.y; }
       }
       // chase target to shoot
-      const tgt = this.findTarget(r, 400, 80, 70);
+      let tgt = this.findTarget(r, 400, 80, 70);
+      // at most two bots hunt the same human pilot at a time
+      if (tgt && (this.time - (tgt.spawnAt ?? -99) < 12 || (A.spare && A.spare.id === tgt.id && this.time < A.spare.until))) tgt = null; // grace after a respawn
+      if (tgt && tgt.human && A.tgt !== tgt.id && this.racers.filter(o => o !== r && o.ai && !o.dead && o.ai.tgt === tgt.id).length >= 2) tgt = null;
       if (tgt && R() < A.aggro * 0.7) { tx = tgt.x + (R() - 0.5) * 6; ty = tgt.y; }
       // threats: incoming missiles -> jink
       const threat = this.missiles.some(m => m.target === r.id && Math.abs(dS(m.s, s)) < 220);
@@ -636,9 +649,15 @@ export class Race {
     const bb = bounds(s + 40);
     tx = clamp(tx, -bb.hw + 12, bb.hw - 12); ty = clamp(ty, bb.yMin + 8, bb.yMax - 12);
     const rwA = Math.max(ridgeAt(s + 40), ridgeAt(s + 120), ridgeAt(s + 220));
-    if (rwA > 0) { if (!A.lane) A.lane = R() < 0.5 ? -1 : 1; if (Math.abs(tx) < rwA + 16 || Math.sign(tx) !== A.lane) tx = A.lane * (rwA + 24); } // pick a lane early
+    if (rwA > 0) { // pick a lane early; each bot keeps its own line inside it so they do not queue nose to tail
+      if (!A.lane) A.lane = R() < 0.5 ? -1 : 1;
+      A.laneOff ??= ((r.id * 37) % 25) - 6;
+      if (ridgeAt(s + 40) > 6 && Math.abs(r.x) > 4 && Math.sign(r.x) !== A.lane) A.lane = Math.sign(r.x); // too late to cross: keep the side it is on
+      if (Math.abs(tx) < rwA + 16 || Math.sign(tx) !== A.lane) tx = A.lane * (rwA + 24 + A.laneOff);
+    }
     else A.lane = 0;
-    if (bb.tunnel) { const rr = Math.hypot(tx, ty), m = bb.hw - 16; if (rr > m) { tx *= m / rr; ty *= m / rr; } }
+    const dTa = toTunnel(s + 40);
+    if (bb.tunnel || dTa >= 0) { const rr = Math.hypot(tx, ty), m = bb.tunnel ? bb.hw - 16 : TUNNEL_R - 9 + dTa * 0.5; if (rr > m) { tx *= m / rr; ty *= m / rr; } }
     inp.steer = clamp((tx - r.x) / 14 - r.vx * 0.02, -1, 1);
     inp.climb = clamp((ty - r.y) / 10 - r.vy * 0.02, -1, 1);
     inp.brake = false;
